@@ -7,7 +7,7 @@ pipeline {
         DOCKER_TAG   = "build-${BUILD_NUMBER}"
         REGISTRY_CREDENTIALS = 'dockerhub-credentials'
         KUBECONFIG_CREDENTIALS = 'k8s-kubeconfig'
-        ALERT_EMAIL  = 'amand2011@example.com' // Change this if you want a different email
+        ALERT_EMAIL  = 'kakadiyaaman2004@gmail.com' // Email to receive success/failure alerts
     }
 
     // Trigger on code push to main branch

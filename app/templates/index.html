@@ -123,6 +123,43 @@
   .search-msg.error { color:var(--red); }
   .search-msg.ok { color:var(--green); }
 
+  /* AUTOCOMPLETE DROPDOWN */
+  .search-wrapper { position:relative; flex:1; }
+  .autocomplete-list {
+    position:absolute; top:100%; left:0; right:0;
+    background:var(--surface2); border:1px solid var(--border);
+    border-top:none; border-radius:0 0 10px 10px;
+    max-height:280px; overflow-y:auto; z-index:200;
+    display:none;
+  }
+  .autocomplete-list.show { display:block; }
+  .ac-item {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 16px; cursor:pointer;
+    border-bottom:1px solid rgba(0,210,255,0.05);
+    transition:background 0.15s;
+  }
+  .ac-item:hover { background:rgba(0,210,255,0.1); }
+  .ac-item:last-child { border-bottom:none; }
+  .ac-symbol {
+    font-weight:700; color:var(--accent); font-size:0.85rem;
+    min-width:80px;
+  }
+  .ac-desc {
+    font-size:0.72rem; color:var(--muted);
+    flex:1; margin-left:12px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap;
+  }
+  .ac-type {
+    font-size:0.6rem; padding:2px 8px; border-radius:4px;
+    background:rgba(0,210,255,0.1); color:var(--accent);
+    margin-left:8px; white-space:nowrap;
+  }
+  .ac-loading {
+    padding:12px 16px; text-align:center;
+    font-size:0.72rem; color:var(--muted);
+  }
+
   /* SUMMARY BAR */
   .summary-bar {
     display:grid;
@@ -355,7 +392,10 @@
 
   <!-- SEARCH -->
   <div class="search-section">
-    <input type="text" id="search-input" placeholder="Search any ticker (e.g. AAPL, BTC-USD, RELIANCE.NS, ETH-USD)" onkeypress="if(event.key==='Enter')searchAndAdd()">
+    <div class="search-wrapper">
+      <input type="text" id="search-input" placeholder="Search any stock (e.g. AAPL, Tesla, Netflix, BTC-USD)" oninput="debouncedSuggest()" onkeydown="handleSearchKey(event)" autocomplete="off">
+      <div class="autocomplete-list" id="ac-list"></div>
+    </div>
     <button onclick="searchAndAdd()">🔍 Search &amp; Add</button>
   </div>
   <div class="search-msg" id="search-msg"></div>
@@ -482,6 +522,96 @@ async function fetchStocks() {
 }
 
 // Search & add stock
+// ── AUTOCOMPLETE ──────────────────────────────────
+let suggestTimer = null;
+let acSelectedIdx = -1;
+
+function debouncedSuggest() {
+  clearTimeout(suggestTimer);
+  acSelectedIdx = -1;
+  suggestTimer = setTimeout(fetchSuggestions, 250);
+}
+
+async function fetchSuggestions() {
+  const input = document.getElementById('search-input');
+  const q = input.value.trim();
+  const list = document.getElementById('ac-list');
+
+  if (q.length < 1) { list.classList.remove('show'); return; }
+
+  list.innerHTML = '<div class="ac-loading">Searching...</div>';
+  list.classList.add('show');
+
+  try {
+    const res = await fetch('/api/suggest?q=' + encodeURIComponent(q));
+    const data = await res.json();
+    const items = data.suggestions || [];
+
+    if (items.length === 0) {
+      list.innerHTML = '<div class="ac-loading">No results found</div>';
+      return;
+    }
+
+    list.innerHTML = items.map((item, i) => `
+      <div class="ac-item" data-symbol="${item.symbol}" onclick="selectSuggestion('${item.symbol}')">
+        <span class="ac-symbol">${item.symbol}</span>
+        <span class="ac-desc">${item.description}</span>
+        <span class="ac-type">${item.type || 'Stock'}</span>
+      </div>
+    `).join('');
+  } catch(err) {
+    list.innerHTML = '<div class="ac-loading">Search failed</div>';
+  }
+}
+
+function selectSuggestion(sym) {
+  const input = document.getElementById('search-input');
+  input.value = sym;
+  document.getElementById('ac-list').classList.remove('show');
+  searchAndAdd();
+}
+
+function handleSearchKey(e) {
+  const list = document.getElementById('ac-list');
+  const items = list.querySelectorAll('.ac-item');
+  if (!list.classList.contains('show') || items.length === 0) {
+    if (e.key === 'Enter') searchAndAdd();
+    return;
+  }
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    acSelectedIdx = Math.min(acSelectedIdx + 1, items.length - 1);
+    highlightAcItem(items);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    acSelectedIdx = Math.max(acSelectedIdx - 1, 0);
+    highlightAcItem(items);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (acSelectedIdx >= 0 && acSelectedIdx < items.length) {
+      selectSuggestion(items[acSelectedIdx].dataset.symbol);
+    } else {
+      searchAndAdd();
+    }
+  } else if (e.key === 'Escape') {
+    list.classList.remove('show');
+  }
+}
+
+function highlightAcItem(items) {
+  items.forEach((el, i) => {
+    el.style.background = i === acSelectedIdx ? 'rgba(0,210,255,0.15)' : '';
+  });
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-wrapper')) {
+    document.getElementById('ac-list').classList.remove('show');
+  }
+});
+
 async function searchAndAdd() {
   const input = document.getElementById('search-input');
   const sym = input.value.trim().toUpperCase();

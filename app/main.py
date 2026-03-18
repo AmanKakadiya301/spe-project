@@ -282,6 +282,32 @@ def search_stock(query):
     return jsonify(result), 200
 
 
+@app.route("/api/suggest")
+def suggest_stocks():
+    """GET /api/suggest?q=net — return up to 8 matching ticker suggestions from Finnhub."""
+    query = request.args.get("q", "").strip()
+    if not query or len(query) < 1:
+        return jsonify({"suggestions": []}), 200
+
+    try:
+        from stock_data import finnhub_client
+        if not finnhub_client:
+            return jsonify({"suggestions": []}), 200
+
+        res = finnhub_client.symbol_search(query)
+        suggestions = []
+        for item in res.get("result", [])[:8]:
+            suggestions.append({
+                "symbol": item.get("symbol", ""),
+                "description": item.get("description", ""),
+                "type": item.get("type", ""),
+            })
+        return jsonify({"suggestions": suggestions}), 200
+    except Exception as exc:
+        logger.warning(f"Suggest failed for '{query}': {exc}")
+        return jsonify({"suggestions": []}), 200
+
+
 # ── Portfolio API ─────────────────────────────────────────────────────────────
 
 @app.route("/api/portfolio", methods=["GET"])

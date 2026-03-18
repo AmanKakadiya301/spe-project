@@ -60,10 +60,10 @@ spec:
         resources:
           requests:
             cpu: "100m"        # 0.1 CPU core
-            memory: "128Mi"    # 128 MB RAM
+            memory: "256Mi"    # 256 MB RAM
           limits:
             cpu: "500m"        # Max 0.5 CPU core
-            memory: "256Mi"    # Max 256 MB RAM
+            memory: "512Mi"    # Max 512 MB RAM (increased to prevent OOM)
 
         # Secure: Run as non-root (matches Dockerfile)
         securityContext:

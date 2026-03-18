@@ -1,17 +1,23 @@
 """
 stock_data.py
 -------------
-Handles all stock price fetching logic.
-Uses yfinance for real data, falls back to random-walk simulation if unavailable.
-Accepts ANY ticker symbol — no hardcoded limit.
+Handles all stock price fetching logic using Finnhub.
 """
 
-import yfinance as yf
+import os
 import random
 import time
 import logging
+import finnhub
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+# Initialize Finnhub client
+API_KEY = os.getenv("FINNHUB_API_KEY")
+if not API_KEY:
+    logger.warning("FINNHUB_API_KEY environment variable not set! Live data will fail.")
+finnhub_client = finnhub.Client(api_key=API_KEY) if API_KEY else None
 
 # Default stock symbols to track on the homepage
 DEFAULT_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "AMD", "INTC", "NFLX", "IBM", "ORCL"]
@@ -51,60 +57,79 @@ def simulate_price(base_price: float) -> dict:
 
 def search_symbol(query: str) -> dict:
     """
-    Validate whether a ticker symbol exists via yfinance.
+    Validate whether a ticker symbol exists via Finnhub.
     Returns basic info if found, or error dict if not.
     """
     query = query.upper().strip()
     if not query:
         return {"error": "Empty query"}
     try:
-        ticker = yf.Ticker(query)
-        info = ticker.fast_info
-        price = info.last_price
-        if price is None:
+        if not finnhub_client:
+            raise ValueError("Finnhub unconfigured")
+            
+        res = finnhub_client.symbol_search(query)
+        # Find exact or best match
+        best_match = None
+        for r in res.get('result', []):
+            if r['symbol'] == query or r['displaySymbol'] == query:
+                best_match = r
+                break
+        
+        if not best_match and res.get('result'):
+            best_match = res['result'][0]
+            
+        if not best_match:
             return {"error": f"Symbol '{query}' not found"}
+            
+        # Get actual price
+        quote = finnhub_client.quote(best_match['symbol'])
+        
         return {
-            "symbol": query,
-            "price": round(price, 2),
+            "symbol": best_match['displaySymbol'],
+            "price": quote.get('c', 0),
             "valid": True,
         }
-    except Exception:
+    except Exception as exc:
+        logger.error(f"Search failed: {exc}")
         return {"error": f"Symbol '{query}' not found"}
 
 
 def get_stock_price(symbol: str) -> dict:
     """
-    Fetch real-time stock price for a given symbol.
-    Accepts ANY valid ticker symbol (not just defaults).
-    Falls back to simulation if yfinance is unavailable.
+    Fetch real-time stock price for a given symbol from Finnhub.
+    Falls back to simulation if unavailable.
     """
     symbol = symbol.upper()
     try:
-        ticker      = yf.Ticker(symbol)
-        info        = ticker.fast_info
-        current     = info.last_price
-        prev_close  = info.previous_close
+        if not finnhub_client:
+            raise ValueError("Finnhub unconfigured")
+            
+        quote = finnhub_client.quote(symbol)
+        
+        current = quote.get('c')
+        prev_close = quote.get('pc')
+        
+        if current == 0 and prev_close == 0:
+            # Finnhub returns 0s for invalid symbols
+            raise ValueError(f"No price data returned from Finnhub for {symbol}")
 
-        if current is None:
-            raise ValueError("No price data returned from yfinance")
+        change = quote.get('d', round(current - prev_close, 2))
+        change_pct = quote.get('dp', round((change / prev_close) * 100, 2) if prev_close else 0.0)
 
-        change      = round(current - prev_close, 2)
-        change_pct  = round((change / prev_close) * 100, 2) if prev_close else 0.0
-
-        logger.info(f"Live price fetched — {symbol}: ${current}")
+        logger.info(f"Live price fetched via Finnhub — {symbol}: ${current}")
 
         return {
             "symbol":         symbol,
             "price":          round(current, 2),
             "previous_close": round(prev_close, 2),
-            "change":         change,
-            "change_pct":     change_pct,
+            "change":         round(change, 2),
+            "change_pct":     round(change_pct, 2),
             "source":         "live",
-            "timestamp":      int(time.time()),
+            "timestamp":      quote.get('t', int(time.time())),
         }
 
     except Exception as exc:
-        logger.warning(f"yfinance failed for {symbol}: {exc}. Using simulation.")
+        logger.warning(f"Finnhub quote failed for {symbol}: {exc}. Using simulation.")
 
         # For known symbols, use simulation fallback
         if symbol in SEED_PRICES:
@@ -128,28 +153,50 @@ def get_stock_price(symbol: str) -> dict:
 
 def get_stock_history(symbol: str, days: int = 7) -> list:
     """
-    Return OHLCV history for the past N days.
+    Return OHLCV history for the past N days from Finnhub.
     Used for sparkline charts in the frontend.
     """
     symbol = symbol.upper()
     try:
-        ticker = yf.Ticker(symbol)
-        hist   = ticker.history(period=f"{days}d")
+        if not finnhub_client:
+            raise ValueError("Finnhub unconfigured")
+            
+        now = int(time.time())
+        # Add 3 extra days to account for weekends where markets are closed
+        past = int((datetime.now() - timedelta(days=days + 3)).timestamp())
+        
+        res = finnhub_client.stock_candles(symbol, 'D', past, now)
+        
+        if res.get('s') != 'ok':
+            raise ValueError(f"Finnhub returned status {res.get('s')}")
 
-        if hist.empty:
-            raise ValueError("Empty history returned")
+        closes = res.get('c', [])
+        opens = res.get('o', [])
+        highs = res.get('h', [])
+        lows = res.get('l', [])
+        times = res.get('t', [])
+        vols = res.get('v', [])
+        
+        # Take only the last 'days' items
+        closes = closes[-days:]
+        opens = opens[-days:]
+        highs = highs[-days:]
+        lows = lows[-days:]
+        times = times[-days:]
+        vols = vols[-days:]
 
-        return [
-            {
-                "date":   str(date.date()),
-                "open":   round(row["Open"], 2),
-                "close":  round(row["Close"], 2),
-                "high":   round(row["High"], 2),
-                "low":    round(row["Low"], 2),
-                "volume": int(row["Volume"]),
-            }
-            for date, row in hist.iterrows()
-        ]
+        history = []
+        for i in range(len(closes)):
+            history.append({
+                "date":   datetime.fromtimestamp(times[i]).strftime('%Y-%m-%d'),
+                "open":   round(opens[i], 2),
+                "close":  round(closes[i], 2),
+                "high":   round(highs[i], 2),
+                "low":    round(lows[i], 2),
+                "volume": int(vols[i]),
+            })
+            
+        return history
 
     except Exception as exc:
         logger.warning(f"History fetch failed for {symbol}: {exc}. Simulating.")
@@ -172,6 +219,8 @@ def get_stock_history(symbol: str, days: int = 7) -> list:
 def get_all_stocks() -> list:
     """Return current prices for all default symbols."""
     results = []
+    # Fetching individually might hit rate limits on free tier (60/min), 
+    # but for 12 stocks every 30s it averages 24/min which is safe.
     for symbol in DEFAULT_SYMBOLS:
         data = get_stock_price(symbol)
         if isinstance(data, dict) and "error" not in data:

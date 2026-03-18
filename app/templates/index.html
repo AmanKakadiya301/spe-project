@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AutoDevOps FinTech | Live Stock Dashboard</title>
+  <!-- Chart.js for beautiful sparklines -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     /* ── Reset & Base ──────────────────────────────────────────────────── */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -33,7 +35,24 @@
     .logo .accent { color: #38bdf8; }
     .logo .accent2 { color: #34d399; }
 
-    .header-right { display: flex; align-items: center; gap: 16px; }
+    .header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+    .search-bar { 
+      display: flex; align-items: center; background: #1e2d45; 
+      border-radius: 8px; padding: 4px; border: 1px solid #2d4a7a; 
+      transition: border-color 0.2s;
+    }
+    .search-bar:focus-within { border-color: #38bdf8; box-shadow: 0 0 8px rgba(56,189,248,0.2); }
+    .search-bar input { 
+      background: transparent; border: none; color: white; 
+      padding: 6px 12px; outline: none; width: 200px; font-size: 0.85rem;
+    }
+    .search-bar input::placeholder { color: #64748b; }
+    .search-bar button { 
+      background: transparent; border: none; color: #93c5fd; 
+      cursor: pointer; padding: 6px 10px; font-size: 1rem; transition: transform 0.2s;
+    }
+    .search-bar button:hover { transform: scale(1.1); color: #fff; }
 
     .live-badge {
       display: flex; align-items: center; gap: 6px;
@@ -68,10 +87,10 @@
       font-size: 0.8rem;
       transition: all 0.2s;
     }
-    .refresh-btn:hover { background: #2d4a7a; border-color: #60a5fa; }
+    .refresh-btn:hover { background: #2d4a7a; border-color: #60a5fa; color: white; }
 
     /* ── Main Container ─────────────────────────────────────────────────── */
-    main { max-width: 1300px; margin: 0 auto; padding: 40px 24px; }
+    main { max-width: 1400px; margin: 0 auto; padding: 40px 24px; }
 
     .page-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 4px; }
     .page-subtitle { color: #64748b; font-size: 0.88rem; margin-bottom: 6px; }
@@ -90,7 +109,9 @@
       border: 1px solid #1e2d45;
       border-radius: 10px;
       padding: 16px 20px;
+      transition: transform 0.2s;
     }
+    .stat-card:hover { transform: translateY(-2px); border-color: #2d4a7a; }
 
     .stat-label { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
     .stat-value { font-size: 1.4rem; font-weight: 700; color: #f1f5f9; margin-top: 4px; }
@@ -105,11 +126,18 @@
       letter-spacing: 0.08em;
       margin-bottom: 16px;
       font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    #loading-indicator {
+      display: none;
+      font-size: 0.75rem; color: #3b82f6;
     }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       gap: 18px;
     }
 
@@ -117,10 +145,12 @@
       background: linear-gradient(145deg, #111827, #0f1929);
       border: 1px solid #1e2d45;
       border-radius: 14px;
-      padding: 22px 24px;
+      padding: 22px 24px 16px;
       transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
       position: relative;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     .card::before {
@@ -138,18 +168,17 @@
       border-color: #2d4a7a;
       box-shadow: 0 8px 30px rgba(59,130,246,0.12);
     }
-
     .card:hover::before { opacity: 1; }
 
     .card-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 14px;
+      margin-bottom: 8px;
     }
 
     .symbol {
-      font-size: 1.3rem;
+      font-size: 1.4rem;
       font-weight: 800;
       color: #f8fafc;
       letter-spacing: -0.5px;
@@ -167,15 +196,15 @@
     .source-simulated { background: #1a1a2e; color: #a78bfa; border: 1px solid #5b21b6; }
 
     .price {
-      font-size: 2rem;
+      font-size: 2.2rem;
       font-weight: 800;
       color: #f1f5f9;
       letter-spacing: -1px;
-      margin: 8px 0;
+      margin: 4px 0 8px;
     }
 
     .change {
-      font-size: 0.88rem;
+      font-size: 0.9rem;
       font-weight: 600;
       display: flex;
       align-items: center;
@@ -186,23 +215,28 @@
     .change.down { color: #f87171; }
 
     .change-pill {
-      font-size: 0.72rem;
+      font-size: 0.75rem;
       padding: 2px 8px;
       border-radius: 6px;
       margin-left: 6px;
     }
-
     .change.up   .change-pill { background: #0a2519; }
     .change.down .change-pill { background: #2a0a0a; }
 
     .prev-close {
-      margin-top: 10px;
       font-size: 0.75rem;
       color: #4b5563;
+      margin-top: 4px;
+    }
+
+    .chart-container {
+      height: 60px;
+      margin-top: auto;
+      padding-top: 15px;
     }
 
     /* ── Loading ────────────────────────────────────────────────────────── */
-    .loading {
+    .loading-block {
       grid-column: 1/-1;
       text-align: center;
       padding: 80px 20px;
@@ -217,23 +251,9 @@
       animation: spin 0.9s linear infinite;
       margin: 0 auto 20px;
     }
-
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .loading-text { font-size: 1rem; }
-
-    /* ── Error ──────────────────────────────────────────────────────────── */
-    .error-card {
-      grid-column: 1/-1;
-      background: #130a0a;
-      border: 1px solid #7f1d1d;
-      border-radius: 14px;
-      padding: 30px;
-      text-align: center;
-      color: #f87171;
-    }
-
-    /* ── Footer ─────────────────────────────────────────────────────────── */
+    /* ── Utilities ──────────────────────────────────────────────────────── */
     footer {
       text-align: center;
       padding: 28px;
@@ -242,36 +262,32 @@
       border-top: 1px solid #111827;
       margin-top: 60px;
     }
-
     footer span { color: #4b5563; }
   </style>
 </head>
 <body>
 
-<!-- ── Header ────────────────────────────────────────────────────────────── -->
 <header>
   <div class="logo">
-    Auto<span class="accent">DevOps</span>
-    <span class="accent2">FinTech</span>
+    Auto<span class="accent">DevOps</span><span class="accent2">FinTech</span>
   </div>
   <div class="header-right">
-    <div class="live-badge">
-      <div class="live-dot"></div>
-      LIVE
+    <div class="search-bar">
+      <input type="text" id="custom-search" placeholder="Search ticker (e.g. BTC-USD)" onkeypress="handleSearch(event)">
+      <button onclick="searchCustomSymbol()" title="Search">🔍</button>
     </div>
-    <button class="refresh-btn" onclick="fetchStocks()">↻ Refresh</button>
+    <div class="live-badge">
+      <div class="live-dot"></div>LIVE
+    </div>
+    <button class="refresh-btn" onclick="fetchStocks(false)">↻ Refresh</button>
   </div>
 </header>
 
-<!-- ── Main ──────────────────────────────────────────────────────────────── -->
 <main>
   <div class="page-title">Real-Time Stock Dashboard</div>
-  <div class="page-subtitle">
-    AutoDevOps FinTech Pipeline · Docker · Kubernetes · Jenkins · ELK
-  </div>
+  <div class="page-subtitle">AutoDevOps FinTech Pipeline · Docker · Kubernetes · Jenkins · ELK</div>
   <div class="last-updated" id="last-updated">Fetching data…</div>
 
-  <!-- Stats Bar -->
   <div class="stats-bar" id="stats-bar">
     <div class="stat-card">
       <div class="stat-label">Tracked Symbols</div>
@@ -291,12 +307,14 @@
     </div>
   </div>
 
-  <!-- Stock Cards -->
-  <div class="section-title">Market Overview</div>
+  <div class="section-title">
+    Market Overview
+    <span id="loading-indicator">Updating...</span>
+  </div>
   <div id="stocks-grid" class="grid">
-    <div class="loading">
+    <div class="loading-block">
       <div class="spinner"></div>
-      <div class="loading-text">Loading live stock data…</div>
+      <div>Loading live stock and chart data…</div>
     </div>
   </div>
 </main>
@@ -307,30 +325,86 @@
 </footer>
 
 <script>
-  // Auto-refresh every 30 seconds
+  let trackedStocks = []; // To keep everything in memory
+  let charts = {};
   const REFRESH_INTERVAL_MS = 30000;
-  let refreshTimer = null;
 
-  async function fetchStocks() {
+  async function fetchStocks(isInitial = false) {
+    if (!isInitial) document.getElementById('loading-indicator').style.display = 'inline';
     try {
       const res  = await fetch('/api/stocks');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      
+      // Merge with newly added custom stocks that might not be in the default list
+      const fetchedSymbols = new Set(data.stocks.map(s => s.symbol));
+      
+      // If there are custom stocks added by user, fetch them again
+      const customPromises = trackedStocks
+        .filter(s => !fetchedSymbols.has(s.symbol))
+        .map(s => fetchStockSingle(s.symbol));
+        
+      const customResults = await Promise.all(customPromises);
+      trackedStocks = [...data.stocks, ...customResults.filter(Boolean)];
 
-      renderStocks(data.stocks);
-      updateStats(data.stocks);
+      renderStocks(trackedStocks);
+      updateStats(trackedStocks);
+      fetchAndDrawCharts(trackedStocks);
 
       document.getElementById('last-updated').textContent =
-        'Last updated: ' + new Date().toLocaleTimeString() +
-        '  ·  Auto-refresh in 30s';
+        'Last updated: ' + new Date().toLocaleTimeString() + '  ·  Auto-refresh in 30s';
     } catch (err) {
-      document.getElementById('stocks-grid').innerHTML = `
-        <div class="error-card">
-          <div style="font-size:1.5rem;margin-bottom:10px">⚠</div>
-          <div style="font-weight:700;margin-bottom:6px">Failed to fetch stock data</div>
-          <div style="font-size:0.82rem;color:#9ca3af">${err.message}</div>
-        </div>`;
+      console.error(err);
+      if (trackedStocks.length === 0) {
+        document.getElementById('stocks-grid').innerHTML = `
+          <div style="grid-column:1/-1;background:#130a0a;border:1px solid #7f1d1d;padding:30px;border-radius:14px;color:#f87171;text-align:center;">
+            Data Fetch Failed: ${err.message}
+          </div>`;
+      }
+    } finally {
+      document.getElementById('loading-indicator').style.display = 'none';
     }
+  }
+
+  async function fetchStockSingle(symbol) {
+    try {
+      const res = await fetch(`/api/stock/${symbol}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }
+
+  function handleSearch(e) {
+    if (e.key === 'Enter') searchCustomSymbol();
+  }
+
+  async function searchCustomSymbol() {
+    const input = document.getElementById('custom-search');
+    let symbol = input.value.trim().toUpperCase();
+    if (!symbol) return;
+    
+    // Check if already tracking
+    if (trackedStocks.find(s => s.symbol === symbol)) {
+      input.value = '';
+      return;
+    }
+
+    document.getElementById('loading-indicator').textContent = 'Searching...';
+    document.getElementById('loading-indicator').style.display = 'inline';
+
+    const stock = await fetchStockSingle(symbol);
+    if (stock && !stock.error) {
+      trackedStocks.unshift(stock); // Add to top
+      renderStocks(trackedStocks);
+      updateStats(trackedStocks);
+      fetchAndDrawCharts([stock]);
+    } else {
+      alert(`Symbol "${symbol}" not found or failed to fetch.`);
+    }
+    
+    document.getElementById('loading-indicator').style.display = 'none';
+    document.getElementById('loading-indicator').textContent = 'Updating...';
+    input.value = '';
   }
 
   function renderStocks(stocks) {
@@ -343,7 +417,7 @@
       const srcLbl = s.source === 'live' ? '● LIVE' : '◉ SIM';
 
       return `
-      <div class="card">
+      <div class="card" id="card-${s.symbol}">
         <div class="card-header">
           <div class="symbol">${s.symbol}</div>
           <div class="source-badge ${srcCls}">${srcLbl}</div>
@@ -354,8 +428,73 @@
           <span class="change-pill">${up ? '+' : ''}${s.change_pct.toFixed(2)}%</span>
         </div>
         <div class="prev-close">Prev close: $${(s.previous_close||0).toFixed(2)}</div>
+        <div class="chart-container">
+          <canvas id="chart-${s.symbol}"></canvas>
+        </div>
       </div>`;
     }).join('');
+    
+    // Re-draw existing charts
+    stocks.forEach(s => {
+      if (charts[s.symbol]) {
+        drawChart(s.symbol, charts[s.symbol]._rawHistory, s.change >= 0);
+      }
+    });
+  }
+
+  async function fetchAndDrawCharts(stocks) {
+    for (const s of stocks) {
+      try {
+        const res = await fetch(`/api/stock/${s.symbol}/history`);
+        if (!res.ok) continue;
+        const history = await res.json();
+        drawChart(s.symbol, history, s.change >= 0);
+      } catch (err) { console.error("Chart error:", err); }
+    }
+  }
+
+  function drawChart(symbol, history, isUp) {
+    const canvas = document.getElementById(`chart-${symbol}`);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const labels = history.map(h => h.date);
+    // Use close price, if close price doesn't exist, try just raw numbers if API changed
+    const data = history.map(h => h.close !== undefined ? h.close : h.price);
+    
+    const color = isUp ? '#4ade80' : '#f87171';
+    const gradient = ctx.createLinearGradient(0, 0, 0, 60);
+    gradient.addColorStop(0, color + '66');
+    gradient.addColorStop(1, color + '00');
+
+    if (charts[symbol] && typeof charts[symbol].destroy === 'function') {
+      charts[symbol].destroy();
+    }
+
+    charts[symbol] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          borderColor: color,
+          backgroundColor: gradient,
+          borderWidth: 2,
+          fill: true,
+          pointRadius: 0,
+          tension: 0.4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display:false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false } },
+        animation: false,
+        layout: { padding: 0 }
+      }
+    });
+    // Save raw history to redraw seamlessly on DOM overwrite
+    charts[symbol]._rawHistory = history;
   }
 
   function updateStats(stocks) {
@@ -372,9 +511,8 @@
                                     `${liveCount} Live / ${stocks.length - liveCount} Sim`;
   }
 
-  // Initial load + auto-refresh
-  fetchStocks();
-  refreshTimer = setInterval(fetchStocks, REFRESH_INTERVAL_MS);
+  fetchStocks(true);
+  setInterval(() => fetchStocks(false), REFRESH_INTERVAL_MS);
 </script>
 </body>
 </html>

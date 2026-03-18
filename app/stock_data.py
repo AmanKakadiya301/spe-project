@@ -13,7 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Default stock symbols to track
-DEFAULT_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA"]
+DEFAULT_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "AMD", "INTC", "NFLX", "IBM", "ORCL"]
 
 # Seed prices for simulation fallback
 SEED_PRICES = {

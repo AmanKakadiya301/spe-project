@@ -3,6 +3,7 @@ stock_data.py
 -------------
 Handles all stock price fetching logic.
 Uses yfinance for real data, falls back to random-walk simulation if unavailable.
+Accepts ANY ticker symbol — no hardcoded limit.
 """
 
 import yfinance as yf
@@ -12,10 +13,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Default stock symbols to track
+# Default stock symbols to track on the homepage
 DEFAULT_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "AMD", "INTC", "NFLX", "IBM", "ORCL"]
 
-# Seed prices for simulation fallback
+# Seed prices for simulation fallback (only for defaults)
 SEED_PRICES = {
     "AAPL":  189.50,
     "GOOGL": 175.20,
@@ -24,6 +25,11 @@ SEED_PRICES = {
     "TSLA":  200.10,
     "META":  505.30,
     "NVDA":  875.40,
+    "AMD":   198.00,
+    "INTC":  44.50,
+    "NFLX":  94.00,
+    "IBM":   255.00,
+    "ORCL":  152.00,
 }
 
 
@@ -43,9 +49,33 @@ def simulate_price(base_price: float) -> dict:
     }
 
 
+def search_symbol(query: str) -> dict:
+    """
+    Validate whether a ticker symbol exists via yfinance.
+    Returns basic info if found, or error dict if not.
+    """
+    query = query.upper().strip()
+    if not query:
+        return {"error": "Empty query"}
+    try:
+        ticker = yf.Ticker(query)
+        info = ticker.fast_info
+        price = info.last_price
+        if price is None:
+            return {"error": f"Symbol '{query}' not found"}
+        return {
+            "symbol": query,
+            "price": round(price, 2),
+            "valid": True,
+        }
+    except Exception:
+        return {"error": f"Symbol '{query}' not found"}
+
+
 def get_stock_price(symbol: str) -> dict:
     """
     Fetch real-time stock price for a given symbol.
+    Accepts ANY valid ticker symbol (not just defaults).
     Falls back to simulation if yfinance is unavailable.
     """
     symbol = symbol.upper()
@@ -76,22 +106,24 @@ def get_stock_price(symbol: str) -> dict:
     except Exception as exc:
         logger.warning(f"yfinance failed for {symbol}: {exc}. Using simulation.")
 
-        if symbol not in SEED_PRICES:
-            return {"error": f"Unknown symbol: {symbol}"}
+        # For known symbols, use simulation fallback
+        if symbol in SEED_PRICES:
+            base      = SEED_PRICES[symbol]
+            sim       = simulate_price(base)
+            SEED_PRICES[symbol] = sim["price"]     # walk the price forward each call
 
-        base      = SEED_PRICES[symbol]
-        sim       = simulate_price(base)
-        SEED_PRICES[symbol] = sim["price"]     # walk the price forward each call
+            return {
+                "symbol":         symbol,
+                "price":          sim["price"],
+                "previous_close": base,
+                "change":         sim["change"],
+                "change_pct":     sim["change_pct"],
+                "source":         "simulated",
+                "timestamp":      int(time.time()),
+            }
 
-        return {
-            "symbol":         symbol,
-            "price":          sim["price"],
-            "previous_close": base,
-            "change":         sim["change"],
-            "change_pct":     sim["change_pct"],
-            "source":         "simulated",
-            "timestamp":      int(time.time()),
-        }
+        # For unknown symbols with no seed, return error
+        return {"error": f"Symbol '{symbol}' not found or unavailable"}
 
 
 def get_stock_history(symbol: str, days: int = 7) -> list:

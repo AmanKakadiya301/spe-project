@@ -7,3 +7,6 @@ pytest==7.4.4
 pytest-cov==4.1.0
 wheel>=0.46.2
 jaraco.context>=6.1.0
+flask-sqlalchemy>=3.1.0
+flask-login>=0.6.3
+flask-bcrypt>=1.0.1

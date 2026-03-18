@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoDevOps FinTech · Portfolio</title>
+<style>
+  :root {
+    --bg: #080c14; --surface: #0d1520; --surface2: #111d2e;
+    --border: rgba(0,210,255,0.08); --accent: #00d2ff; --accent2: #00ff9d;
+    --red: #ff4757; --green: #00ff9d; --text: #e8f4f8; --muted: #4a6a80;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+  body::before {
+    content:''; position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(0,210,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,210,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px; pointer-events:none; z-index:0;
+  }
+  nav {
+    position:sticky; top:0; z-index:100;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 32px;
+    background: rgba(8,12,20,0.85); backdrop-filter:blur(16px);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { font-weight:800; font-size:1.1rem; letter-spacing:0.05em; }
+  .logo span { color: var(--accent); }
+  .nav-links { display:flex; gap:8px; }
+  .nav-link {
+    padding:6px 14px; border-radius:20px; font-size:0.7rem;
+    cursor:pointer; border:1px solid var(--border);
+    background:transparent; color:var(--muted);
+    text-decoration:none; transition: all 0.2s;
+  }
+  .nav-link:hover, .nav-link.active {
+    border-color: var(--accent); color: var(--accent);
+    background: rgba(0,210,255,0.08);
+  }
+  .user-area { display:flex; align-items:center; gap:12px; font-size:0.75rem; color:var(--muted); }
+  .user-area a { color:var(--red); text-decoration:none; font-size:0.7rem; }
+  .user-area a:hover { color:#ff6b81; }
+
+  main {
+    position:relative; z-index:1;
+    max-width:1000px; margin:0 auto; padding:32px 24px;
+  }
+  .page-title {
+    font-size:2rem; font-weight:800;
+    background: linear-gradient(135deg, #e8f4f8, var(--accent));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    margin-bottom:8px;
+  }
+  .page-sub { font-size:0.72rem; color:var(--muted); margin-bottom:28px; }
+
+  .add-bar {
+    display:flex; gap:10px; margin-bottom:24px;
+  }
+  .add-bar input {
+    flex:1; padding:12px 16px;
+    background: var(--surface); border:1px solid var(--border);
+    border-radius:10px; color:var(--text); font-size:0.85rem;
+    outline:none; font-family:'Segoe UI', system-ui, sans-serif;
+    transition: border-color 0.2s;
+  }
+  .add-bar input:focus { border-color:var(--accent); }
+  .add-bar button {
+    padding:12px 24px; border:none; border-radius:10px;
+    background: linear-gradient(135deg, var(--accent), #0090b3);
+    color:#fff; font-weight:700; cursor:pointer;
+    font-family:'Segoe UI', system-ui, sans-serif;
+    transition: all 0.2s; white-space:nowrap;
+  }
+  .add-bar button:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,210,255,0.3); }
+
+  .msg {
+    padding:10px 14px; border-radius:8px; font-size:0.78rem;
+    margin-bottom:16px; display:none;
+  }
+  .msg.error { background:rgba(255,71,87,0.1); border:1px solid rgba(255,71,87,0.3); color:var(--red); }
+  .msg.success { background:rgba(0,255,157,0.1); border:1px solid rgba(0,255,157,0.3); color:var(--green); }
+
+  .portfolio-grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap:16px;
+  }
+  .stock-card {
+    background: var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:20px; position:relative; overflow:hidden;
+    transition: all 0.3s;
+  }
+  .stock-card:hover { border-color:rgba(0,210,255,0.3); transform:translateY(-2px); }
+  .stock-card.gaining::before, .stock-card.losing::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  }
+  .stock-card.gaining::before { background: linear-gradient(90deg, var(--green), transparent); }
+  .stock-card.losing::before { background: linear-gradient(90deg, var(--red), transparent); }
+  .card-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; }
+  .card-ticker { font-size:1.2rem; font-weight:800; }
+  .card-price { font-size:1.5rem; font-weight:800; margin-bottom:8px; }
+  .card-change { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+  .chg-val { font-size:0.78rem; font-weight:700; }
+  .chg-val.up { color:var(--green); }
+  .chg-val.down { color:var(--red); }
+  .chg-pct { font-size:0.72rem; padding:2px 8px; border-radius:4px; }
+  .chg-pct.up { background:rgba(0,255,157,0.12); color:var(--green); }
+  .chg-pct.down { background:rgba(255,71,87,0.12); color:var(--red); }
+  .remove-btn {
+    padding:6px 12px; border:1px solid rgba(255,71,87,0.3);
+    border-radius:8px; background:rgba(255,71,87,0.1);
+    color:var(--red); font-size:0.68rem; cursor:pointer;
+    font-family:'Segoe UI', system-ui, sans-serif; transition:all 0.2s;
+  }
+  .remove-btn:hover { background:rgba(255,71,87,0.2); border-color:var(--red); }
+  .empty-state {
+    text-align:center; padding:60px 20px; color:var(--muted); font-size:0.85rem;
+  }
+  .empty-state .icon { font-size:3rem; margin-bottom:16px; opacity:0.4; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">AutoDevOps <span>FinTech</span></div>
+  <div class="nav-links">
+    <a href="/" class="nav-link">Dashboard</a>
+    <a href="/portfolio" class="nav-link active">Portfolio</a>
+    <a href="/alerts" class="nav-link">Alerts</a>
+  </div>
+  <div class="user-area">
+    <span id="username-display"></span>
+    <a href="/logout">Logout</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page-title">My Portfolio</h1>
+  <p class="page-sub">Track your favorite stocks · Add any ticker symbol</p>
+
+  <div class="add-bar">
+    <input type="text" id="add-symbol" placeholder="Enter ticker symbol (e.g. AAPL, BTC-USD, RELIANCE.NS)" onkeypress="if(event.key==='Enter')addStock()">
+    <button onclick="addStock()">+ Add Stock</button>
+  </div>
+
+  <div class="msg error" id="error-msg"></div>
+  <div class="msg success" id="success-msg"></div>
+
+  <div class="portfolio-grid" id="portfolio-grid">
+    <div class="empty-state">
+      <div class="icon">📊</div>
+      <div>Loading portfolio...</div>
+    </div>
+  </div>
+</main>
+
+<script>
+async function loadUser() {
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (data.authenticated) {
+      document.getElementById('username-display').textContent = '👤 ' + data.username;
+    }
+  } catch(e) {}
+}
+
+function showMsg(type, msg) {
+  const el = document.getElementById(type + '-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  const other = type === 'error' ? 'success' : 'error';
+  document.getElementById(other + '-msg').style.display = 'none';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+async function loadPortfolio() {
+  try {
+    const res = await fetch('/api/portfolio');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    renderPortfolio(data.portfolio);
+  } catch(e) {
+    document.getElementById('portfolio-grid').innerHTML = '<div class="empty-state"><div>Failed to load portfolio</div></div>';
+  }
+}
+
+function renderPortfolio(items) {
+  const grid = document.getElementById('portfolio-grid');
+  if (!items.length) {
+    grid.innerHTML = '<div class="empty-state"><div class="icon">📊</div><div>No stocks in portfolio yet. Add one above!</div></div>';
+    return;
+  }
+  grid.innerHTML = items.map(s => {
+    const hasPrice = s.price !== undefined;
+    const isUp = hasPrice && s.change >= 0;
+    const cls = isUp ? 'gaining' : 'losing';
+    const arrow = isUp ? '▲' : '▼';
+    const dir = isUp ? 'up' : 'down';
+    const price = hasPrice ? '$' + s.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : 'N/A';
+    const chg = hasPrice ? Math.abs(s.change).toFixed(2) : '0.00';
+    const pct = hasPrice ? ((isUp?'+':'') + s.change_pct.toFixed(2) + '%') : '0.00%';
+    return `<div class="stock-card ${hasPrice ? cls : ''}">
+      <div class="card-head">
+        <div class="card-ticker">${s.symbol}</div>
+        <button class="remove-btn" onclick="removeStock('${s.symbol}')">✕ Remove</button>
+      </div>
+      <div class="card-price">${price}</div>
+      <div class="card-change">
+        <span class="chg-val ${dir}">${arrow} $${chg}</span>
+        <span class="chg-pct ${dir}">${pct}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addStock() {
+  const input = document.getElementById('add-symbol');
+  const symbol = input.value.trim().toUpperCase();
+  if (!symbol) return;
+
+  try {
+    const res = await fetch('/api/portfolio', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ symbol })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showMsg('success', data.message);
+      input.value = '';
+      loadPortfolio();
+    } else {
+      showMsg('error', data.error);
+    }
+  } catch(e) {
+    showMsg('error', 'Network error');
+  }
+}
+
+async function removeStock(symbol) {
+  try {
+    const res = await fetch('/api/portfolio/' + symbol, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok) {
+      showMsg('success', data.message);
+      loadPortfolio();
+    } else {
+      showMsg('error', data.error);
+    }
+  } catch(e) {
+    showMsg('error', 'Network error');
+  }
+}
+
+loadUser();
+loadPortfolio();
+setInterval(loadPortfolio, 30000);
+</script>
+</body>
+</html>

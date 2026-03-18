@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoDevOps FinTech · Alerts</title>
+<style>
+  :root {
+    --bg: #080c14; --surface: #0d1520; --surface2: #111d2e;
+    --border: rgba(0,210,255,0.08); --accent: #00d2ff; --accent2: #00ff9d;
+    --red: #ff4757; --green: #00ff9d; --yellow: #ffd32a;
+    --text: #e8f4f8; --muted: #4a6a80;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height:100vh;
+  }
+  body::before {
+    content:''; position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(0,210,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,210,255,0.03) 1px, transparent 1px);
+    background-size:40px 40px; pointer-events:none; z-index:0;
+  }
+  nav {
+    position:sticky; top:0; z-index:100;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 32px;
+    background:rgba(8,12,20,0.85); backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+  }
+  .logo { font-weight:800; font-size:1.1rem; }
+  .logo span { color:var(--accent); }
+  .nav-links { display:flex; gap:8px; }
+  .nav-link {
+    padding:6px 14px; border-radius:20px; font-size:0.7rem;
+    cursor:pointer; border:1px solid var(--border);
+    background:transparent; color:var(--muted);
+    text-decoration:none; transition:all 0.2s;
+  }
+  .nav-link:hover, .nav-link.active {
+    border-color:var(--accent); color:var(--accent);
+    background:rgba(0,210,255,0.08);
+  }
+  .user-area { display:flex; align-items:center; gap:12px; font-size:0.75rem; color:var(--muted); }
+  .user-area a { color:var(--red); text-decoration:none; font-size:0.7rem; }
+
+  main {
+    position:relative; z-index:1;
+    max-width:900px; margin:0 auto; padding:32px 24px;
+  }
+  .page-title {
+    font-size:2rem; font-weight:800;
+    background:linear-gradient(135deg, #e8f4f8, var(--yellow));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+    margin-bottom:8px;
+  }
+  .page-sub { font-size:0.72rem; color:var(--muted); margin-bottom:28px; }
+
+  .create-form {
+    background: var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:24px; margin-bottom:28px;
+  }
+  .form-title { font-size:0.85rem; font-weight:700; margin-bottom:16px; color:var(--accent); }
+  .form-row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .form-field { flex:1; min-width:140px; }
+  .form-field label {
+    display:block; font-size:0.65rem; color:var(--muted);
+    text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;
+  }
+  .form-field input, .form-field select {
+    width:100%; padding:10px 12px;
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:8px; color:var(--text); font-size:0.82rem;
+    font-family:'Segoe UI', system-ui, sans-serif; outline:none;
+    transition:border-color 0.2s;
+  }
+  .form-field input:focus, .form-field select:focus { border-color:var(--accent); }
+  .form-field select option { background:var(--surface2); color:var(--text); }
+  .create-btn {
+    padding:10px 24px; border:none; border-radius:8px;
+    background:linear-gradient(135deg, var(--yellow), #e6a800);
+    color:#080c14; font-weight:700; cursor:pointer;
+    font-family:'Segoe UI', system-ui, sans-serif;
+    transition:all 0.2s; white-space:nowrap; align-self:flex-end;
+  }
+  .create-btn:hover { transform:translateY(-2px); box-shadow:0 8px 20px rgba(255,211,42,0.25); }
+
+  .msg {
+    padding:10px 14px; border-radius:8px; font-size:0.78rem;
+    margin-bottom:16px; display:none;
+  }
+  .msg.error { background:rgba(255,71,87,0.1); border:1px solid rgba(255,71,87,0.3); color:var(--red); }
+  .msg.success { background:rgba(0,255,157,0.1); border:1px solid rgba(0,255,157,0.3); color:var(--green); }
+
+  .alerts-list { display:flex; flex-direction:column; gap:12px; }
+  .alert-card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:18px 20px;
+    display:flex; align-items:center; justify-content:space-between;
+    transition:all 0.2s; flex-wrap:wrap; gap:12px;
+  }
+  .alert-card:hover { border-color:rgba(0,210,255,0.2); }
+  .alert-card.triggered { opacity:0.5; }
+  .alert-info { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .alert-symbol { font-size:1.1rem; font-weight:800; }
+  .alert-detail { font-size:0.78rem; color:var(--muted); }
+  .alert-detail strong { color:var(--text); }
+  .alert-dir {
+    font-size:0.65rem; padding:3px 10px; border-radius:4px; font-weight:700;
+    text-transform:uppercase;
+  }
+  .alert-dir.above { background:rgba(0,255,157,0.12); color:var(--green); }
+  .alert-dir.below { background:rgba(255,71,87,0.12); color:var(--red); }
+  .alert-status {
+    font-size:0.65rem; padding:3px 10px; border-radius:4px; font-weight:600;
+  }
+  .alert-status.active { background:rgba(0,210,255,0.1); color:var(--accent); }
+  .alert-status.triggered { background:rgba(255,211,42,0.15); color:var(--yellow); }
+  .del-btn {
+    padding:6px 12px; border:1px solid rgba(255,71,87,0.3);
+    border-radius:8px; background:rgba(255,71,87,0.1);
+    color:var(--red); font-size:0.68rem; cursor:pointer;
+    font-family:'Segoe UI', system-ui, sans-serif; transition:all 0.2s;
+  }
+  .del-btn:hover { background:rgba(255,71,87,0.2); border-color:var(--red); }
+  .empty-state {
+    text-align:center; padding:60px 20px; color:var(--muted); font-size:0.85rem;
+  }
+  .empty-state .icon { font-size:3rem; margin-bottom:16px; opacity:0.4; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">AutoDevOps <span>FinTech</span></div>
+  <div class="nav-links">
+    <a href="/" class="nav-link">Dashboard</a>
+    <a href="/portfolio" class="nav-link">Portfolio</a>
+    <a href="/alerts" class="nav-link active">Alerts</a>
+  </div>
+  <div class="user-area">
+    <span id="username-display"></span>
+    <a href="/logout">Logout</a>
+  </div>
+</nav>
+
+<main>
+  <h1 class="page-title">Price Alerts</h1>
+  <p class="page-sub">Get notified when a stock crosses your target price</p>
+
+  <div class="create-form">
+    <div class="form-title">Create New Alert</div>
+    <div class="form-row">
+      <div class="form-field">
+        <label>Symbol</label>
+        <input type="text" id="alert-symbol" placeholder="e.g. AAPL">
+      </div>
+      <div class="form-field">
+        <label>Target Price ($)</label>
+        <input type="number" id="alert-price" placeholder="150.00" step="0.01" min="0">
+      </div>
+      <div class="form-field">
+        <label>Direction</label>
+        <select id="alert-direction">
+          <option value="above">Goes Above ↑</option>
+          <option value="below">Goes Below ↓</option>
+        </select>
+      </div>
+      <button class="create-btn" onclick="createAlert()">🔔 Create Alert</button>
+    </div>
+  </div>
+
+  <div class="msg error" id="error-msg"></div>
+  <div class="msg success" id="success-msg"></div>
+
+  <div class="alerts-list" id="alerts-list">
+    <div class="empty-state">
+      <div class="icon">🔔</div>
+      <div>Loading alerts...</div>
+    </div>
+  </div>
+</main>
+
+<script>
+async function loadUser() {
+  try {
+    const res = await fetch('/api/me');
+    const data = await res.json();
+    if (data.authenticated) {
+      document.getElementById('username-display').textContent = '👤 ' + data.username;
+    }
+  } catch(e) {}
+}
+
+function showMsg(type, msg) {
+  const el = document.getElementById(type + '-msg');
+  el.textContent = msg;
+  el.style.display = 'block';
+  const other = type === 'error' ? 'success' : 'error';
+  document.getElementById(other + '-msg').style.display = 'none';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+async function loadAlerts() {
+  try {
+    const res = await fetch('/api/alerts');
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    const data = await res.json();
+    renderAlerts(data.alerts);
+  } catch(e) {
+    document.getElementById('alerts-list').innerHTML = '<div class="empty-state"><div>Failed to load alerts</div></div>';
+  }
+}
+
+function renderAlerts(alerts) {
+  const list = document.getElementById('alerts-list');
+  if (!alerts.length) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">🔔</div><div>No alerts yet. Create one above!</div></div>';
+    return;
+  }
+  list.innerHTML = alerts.map(a => {
+    const statusCls = a.triggered ? 'triggered' : 'active';
+    const statusText = a.triggered ? '✓ Triggered' : '● Active';
+    const cardCls = a.triggered ? 'triggered' : '';
+    return `<div class="alert-card ${cardCls}">
+      <div class="alert-info">
+        <span class="alert-symbol">${a.symbol}</span>
+        <span class="alert-dir ${a.direction}">${a.direction === 'above' ? '↑ Above' : '↓ Below'}</span>
+        <span class="alert-detail">Target: <strong>$${a.target_price.toFixed(2)}</strong></span>
+        <span class="alert-status ${statusCls}">${statusText}</span>
+      </div>
+      <button class="del-btn" onclick="deleteAlert(${a.id})">✕ Delete</button>
+    </div>`;
+  }).join('');
+}
+
+async function createAlert() {
+  const symbol = document.getElementById('alert-symbol').value.trim().toUpperCase();
+  const price = parseFloat(document.getElementById('alert-price').value);
+  const direction = document.getElementById('alert-direction').value;
+
+  if (!symbol) { showMsg('error', 'Enter a symbol'); return; }
+  if (isNaN(price) || price <= 0) { showMsg('error', 'Enter a valid price'); return; }
+
+  try {
+    const res = await fetch('/api/alerts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ symbol, target_price: price, direction })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showMsg('success', data.message);
+      document.getElementById('alert-symbol').value = '';
+      document.getElementById('alert-price').value = '';
+      loadAlerts();
+    } else {
+      showMsg('error', data.error);
+    }
+  } catch(e) {
+    showMsg('error', 'Network error');
+  }
+}
+
+async function deleteAlert(id) {
+  try {
+    const res = await fetch('/api/alerts/' + id, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok) {
+      showMsg('success', data.message);
+      loadAlerts();
+    } else {
+      showMsg('error', data.error);
+    }
+  } catch(e) {
+    showMsg('error', 'Network error');
+  }
+}
+
+loadUser();
+loadAlerts();
+</script>
+</body>
+</html>

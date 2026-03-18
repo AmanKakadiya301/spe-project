@@ -5,10 +5,24 @@ Flask REST API for the AutoDevOps FinTech Stock Analysis System.
 
 Endpoints:
   GET /                           → Web dashboard (HTML)
+  GET /login                      → Login/Register page
+  GET /portfolio                  → Portfolio page (auth required)
+  GET /alerts                     → Alerts page (auth required)
   GET /health                     → Kubernetes liveness/readiness probe
+  POST /register                  → Register new user
+  POST /do-login                  → Login user
+  GET /logout                     → Logout user
   GET /api/stock/<symbol>         → Single stock price
   GET /api/stocks                 → All tracked stocks
   GET /api/stock/<symbol>/history → 7-day price history
+  GET /api/search/<query>         → Search/validate a ticker
+  GET /api/portfolio              → Get user's portfolio
+  POST /api/portfolio             → Add stock to portfolio
+  DELETE /api/portfolio/<symbol>  → Remove stock from portfolio
+  GET /api/alerts                 → Get user's alerts
+  POST /api/alerts                → Create a price alert
+  DELETE /api/alerts/<id>         → Delete a price alert
+  GET /api/me                     → Current user info
 
 Logging: Structured JSON logs to stdout — captured by ELK (Logstash).
 """
@@ -19,10 +33,13 @@ import logging
 import time
 from datetime import datetime
 
-from flask import Flask, jsonify, render_template, request, abort
+from flask import Flask, jsonify, render_template, request, abort, redirect, url_for
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
 
-from stock_data import get_stock_price, get_stock_history, get_all_stocks
+from stock_data import get_stock_price, get_stock_history, get_all_stocks, search_symbol
+from models import db, User, PortfolioItem, Alert
 
 # ── Load environment variables ────────────────────────────────────────────────
 load_dotenv()
@@ -30,6 +47,39 @@ load_dotenv()
 # ── Flask App ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-in-prod")
+
+# ── Database Config ───────────────────────────────────────────────────────────
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(basedir, "instance", "app.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# Ensure instance directory exists
+os.makedirs(os.path.join(basedir, "instance"), exist_ok=True)
+
+db.init_app(app)
+bcrypt = Bcrypt(app)
+
+# ── Flask-Login ───────────────────────────────────────────────────────────────
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login_page"
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+
+@login_manager.unauthorized_handler
+def unauthorized():
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Authentication required"}), 401
+    return redirect(url_for("login_page"))
+
+
+# ── Create tables on first run ────────────────────────────────────────────────
+with app.app_context():
+    db.create_all()
 
 
 # ── Structured JSON Logging (ELK-compatible) ──────────────────────────────────
@@ -73,7 +123,7 @@ def _log_request(response):
     return response
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Page Routes ───────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -81,12 +131,100 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/login")
+def login_page():
+    """Serve the login/register page."""
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+    return render_template("login.html")
+
+
+@app.route("/portfolio")
+@login_required
+def portfolio_page():
+    """Serve the portfolio page."""
+    return render_template("portfolio.html")
+
+
+@app.route("/alerts")
+@login_required
+def alerts_page():
+    """Serve the alerts page."""
+    return render_template("alerts.html")
+
+
+# ── Auth Routes ───────────────────────────────────────────────────────────────
+
+@app.route("/register", methods=["POST"])
+def register():
+    """Register a new user."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+
+    if len(username) < 3:
+        return jsonify({"error": "Username must be at least 3 characters"}), 400
+
+    if len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists"}), 409
+
+    pw_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+    user = User(username=username, password_hash=pw_hash)
+    db.session.add(user)
+    db.session.commit()
+
+    login_user(user)
+    logger.info(f"User registered: {username}")
+    return jsonify({"message": "Registered successfully", "username": username}), 201
+
+
+@app.route("/do-login", methods=["POST"])
+def do_login():
+    """Authenticate a user."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+
+    user = User.query.filter_by(username=username).first()
+    if not user or not bcrypt.check_password_hash(user.password_hash, password):
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    login_user(user)
+    logger.info(f"User logged in: {username}")
+    return jsonify({"message": "Login successful", "username": username}), 200
+
+
+@app.route("/logout")
+def logout():
+    """Log out the current user."""
+    if current_user.is_authenticated:
+        logger.info(f"User logged out: {current_user.username}")
+    logout_user()
+    return redirect(url_for("login_page"))
+
+
+@app.route("/api/me")
+def get_me():
+    """Return current user info."""
+    if current_user.is_authenticated:
+        return jsonify({"authenticated": True, "username": current_user.username}), 200
+    return jsonify({"authenticated": False}), 200
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
+
 @app.route("/health")
 def health():
-    """
-    Kubernetes liveness & readiness probe.
-    Returns HTTP 200 + JSON {status: ok} when the app is healthy.
-    """
+    """Kubernetes liveness & readiness probe."""
     return jsonify({
         "status":    "ok",
         "service":   "stock-app",
@@ -95,28 +233,21 @@ def health():
     }), 200
 
 
+# ── Stock API ─────────────────────────────────────────────────────────────────
+
 @app.route("/api/stock/<symbol>")
 def get_stock(symbol):
-    """
-    GET /api/stock/AAPL
-    Returns current price data for the requested symbol.
-    404 if the symbol is unknown.
-    """
+    """GET /api/stock/AAPL — current price data."""
     result = get_stock_price(symbol.upper())
-
     if "error" in result:
         abort(404, description=result["error"])
-
     logger.info(f"Stock served: {symbol.upper()} → ${result['price']}")
     return jsonify(result), 200
 
 
 @app.route("/api/stocks")
 def get_stocks():
-    """
-    GET /api/stocks
-    Returns current price data for all tracked symbols.
-    """
+    """GET /api/stocks — all tracked symbols."""
     stocks = get_all_stocks()
     return jsonify({
         "stocks":    stocks,
@@ -127,12 +258,9 @@ def get_stocks():
 
 @app.route("/api/stock/<symbol>/history")
 def get_history(symbol):
-    """
-    GET /api/stock/AAPL/history?days=7
-    Returns OHLCV history for the past N days (1–30, default 7).
-    """
+    """GET /api/stock/AAPL/history?days=7 — OHLCV history."""
     days    = request.args.get("days", 7, type=int)
-    days    = min(max(days, 1), 30)        # clamp 1..30
+    days    = min(max(days, 1), 30)
     history = get_stock_history(symbol.upper(), days)
 
     if not history:
@@ -143,6 +271,132 @@ def get_history(symbol):
         "days":    days,
         "history": history,
     }), 200
+
+
+@app.route("/api/search/<query>")
+def search_stock(query):
+    """GET /api/search/AAPL — validate if a ticker exists."""
+    result = search_symbol(query)
+    if "error" in result:
+        return jsonify(result), 404
+    return jsonify(result), 200
+
+
+# ── Portfolio API ─────────────────────────────────────────────────────────────
+
+@app.route("/api/portfolio", methods=["GET"])
+@login_required
+def get_portfolio():
+    """Get all stocks in user's portfolio with live prices."""
+    items = PortfolioItem.query.filter_by(user_id=current_user.id).all()
+    portfolio = []
+    for item in items:
+        stock = get_stock_price(item.symbol)
+        entry = item.to_dict()
+        if "error" not in stock:
+            entry.update({
+                "price": stock["price"],
+                "change": stock["change"],
+                "change_pct": stock["change_pct"],
+                "previous_close": stock.get("previous_close", 0),
+                "source": stock["source"],
+            })
+        portfolio.append(entry)
+    return jsonify({"portfolio": portfolio, "count": len(portfolio)}), 200
+
+
+@app.route("/api/portfolio", methods=["POST"])
+@login_required
+def add_to_portfolio():
+    """Add a stock symbol to user's portfolio."""
+    data = request.get_json(silent=True) or {}
+    symbol = data.get("symbol", "").upper().strip()
+
+    if not symbol:
+        return jsonify({"error": "Symbol is required"}), 400
+
+    # Check if already in portfolio
+    exists = PortfolioItem.query.filter_by(user_id=current_user.id, symbol=symbol).first()
+    if exists:
+        return jsonify({"error": f"{symbol} is already in your portfolio"}), 409
+
+    item = PortfolioItem(user_id=current_user.id, symbol=symbol)
+    db.session.add(item)
+    db.session.commit()
+
+    logger.info(f"Portfolio add: {current_user.username} → {symbol}")
+    return jsonify({"message": f"{symbol} added to portfolio", "item": item.to_dict()}), 201
+
+
+@app.route("/api/portfolio/<symbol>", methods=["DELETE"])
+@login_required
+def remove_from_portfolio(symbol):
+    """Remove a stock from user's portfolio."""
+    symbol = symbol.upper()
+    item = PortfolioItem.query.filter_by(user_id=current_user.id, symbol=symbol).first()
+    if not item:
+        return jsonify({"error": f"{symbol} not found in your portfolio"}), 404
+
+    db.session.delete(item)
+    db.session.commit()
+
+    logger.info(f"Portfolio remove: {current_user.username} → {symbol}")
+    return jsonify({"message": f"{symbol} removed from portfolio"}), 200
+
+
+# ── Alerts API ────────────────────────────────────────────────────────────────
+
+@app.route("/api/alerts", methods=["GET"])
+@login_required
+def get_alerts():
+    """Get all user's price alerts."""
+    alerts = Alert.query.filter_by(user_id=current_user.id).order_by(Alert.created_at.desc()).all()
+    return jsonify({"alerts": [a.to_dict() for a in alerts], "count": len(alerts)}), 200
+
+
+@app.route("/api/alerts", methods=["POST"])
+@login_required
+def create_alert():
+    """Create a new price alert."""
+    data = request.get_json(silent=True) or {}
+    symbol = data.get("symbol", "").upper().strip()
+    target_price = data.get("target_price")
+    direction = data.get("direction", "").lower().strip()
+
+    if not symbol or target_price is None or direction not in ("above", "below"):
+        return jsonify({"error": "symbol, target_price, and direction (above/below) are required"}), 400
+
+    try:
+        target_price = float(target_price)
+    except (ValueError, TypeError):
+        return jsonify({"error": "target_price must be a number"}), 400
+
+    alert = Alert(
+        user_id=current_user.id,
+        symbol=symbol,
+        target_price=target_price,
+        direction=direction,
+    )
+    db.session.add(alert)
+    db.session.commit()
+
+    logger.info(f"Alert created: {current_user.username} → {symbol} {direction} ${target_price}")
+    return jsonify({"message": "Alert created", "alert": alert.to_dict()}), 201
+
+
+@app.route("/api/alerts/<int:alert_id>", methods=["DELETE"])
+@login_required
+def delete_alert(alert_id):
+    """Delete a price alert."""
+    alert = Alert.query.filter_by(id=alert_id, user_id=current_user.id).first()
+    if not alert:
+        return jsonify({"error": "Alert not found"}), 404
+
+    db.session.delete(alert)
+    db.session.commit()
+
+    logger.info(f"Alert deleted: {current_user.username} → alert #{alert_id}")
+    return jsonify({"message": "Alert deleted"}), 200
 
 
 # ── Error Handlers ────────────────────────────────────────────────────────────

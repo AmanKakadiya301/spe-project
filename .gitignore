@@ -27,3 +27,4 @@ elasticsearch-data/
 htmlcov/
 .coverage
 test-results.xml
+trivy

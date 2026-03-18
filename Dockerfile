@@ -46,6 +46,9 @@ COPY --from=builder /install /usr/local/lib/python3.11/site-packages
 # Copy application source
 COPY app/ .
 
+# Create instance dir for SQLite DB
+RUN mkdir -p /app/instance
+
 # Fix ownership
 RUN chown -R appuser:appuser /app
 

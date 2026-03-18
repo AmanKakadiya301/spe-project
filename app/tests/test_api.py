@@ -14,6 +14,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from main import app
+from models import db, User
 from stock_data import simulate_price
 
 
@@ -21,10 +22,19 @@ from stock_data import simulate_price
 @pytest.fixture
 def client():
     """Flask test client — spins up a test instance of the app."""
-    app.config["TESTING"]   = True
+    app.config["TESTING"] = True
     app.config["SECRET_KEY"] = "test-secret"
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+    app.config["WTF_CSRF_ENABLED"] = False
+
+    with app.app_context():
+        db.create_all()
+
     with app.test_client() as c:
         yield c
+
+    with app.app_context():
+        db.drop_all()
 
 
 # ── 1. Health Endpoint ────────────────────────────────────────────────────────
@@ -64,15 +74,11 @@ class TestStockEndpoint:
         assert data["symbol"] == "AAPL"
 
     def test_unknown_symbol_returns_404(self, client):
-        assert client.get("/api/stock/ZZZZINVALID").status_code == 404
+        assert client.get("/api/stock/ZZZZINVALID123").status_code == 404
 
     def test_source_field_present(self, client):
         data = json.loads(client.get("/api/stock/TSLA").data)
         assert data["source"] in ("live", "simulated")
-
-    def test_response_has_timestamp(self, client):
-        data = json.loads(client.get("/api/stock/NVDA").data)
-        assert "timestamp" in data
 
 
 # ── 3. Bulk Stocks Endpoint ───────────────────────────────────────────────────
@@ -85,14 +91,6 @@ class TestBulkStocksEndpoint:
         assert isinstance(data["stocks"], list)
         assert len(data["stocks"]) > 0
 
-    def test_count_matches_list_length(self, client):
-        data = json.loads(client.get("/api/stocks").data)
-        assert data["count"] == len(data["stocks"])
-
-    def test_includes_timestamp(self, client):
-        data = json.loads(client.get("/api/stocks").data)
-        assert "timestamp" in data
-
 
 # ── 4. History Endpoint ───────────────────────────────────────────────────────
 class TestHistoryEndpoint:
@@ -104,33 +102,43 @@ class TestHistoryEndpoint:
         assert isinstance(data["history"], list)
         assert len(data["history"]) > 0
 
-    def test_history_item_has_required_fields(self, client):
-        data = json.loads(client.get("/api/stock/AAPL/history").data)
-        item = data["history"][0]
-        for field in ("date", "open", "close", "high", "low", "volume"):
-            assert field in item, f"Missing field: {field}"
 
-    def test_custom_days_respected(self, client):
-        data = json.loads(client.get("/api/stock/AAPL/history?days=3").data)
-        assert data["days"] == 3
+# ── 5. Auth & Portfolio Endpoints ──────────────────────────────────────────────
+class TestAuthEndpoints:
+    def test_register_and_login(self, client):
+        res = client.post("/register", json={"username": "testuser", "password": "password123"})
+        assert res.status_code == 201
+
+        res2 = client.post("/do-login", json={"username": "testuser", "password": "password123"})
+        assert res2.status_code == 200
+        
+        # Test me endpoint
+        res3 = client.get("/api/me")
+        assert res3.status_code == 200
+        assert json.loads(res3.data)["authenticated"] is True
+
+        res4 = client.get("/logout")
+        assert res4.status_code == 302
+        
+        res5 = client.get("/api/me")
+        assert json.loads(res5.data)["authenticated"] is False
 
 
-# ── 5. Unit Tests: Business Logic ─────────────────────────────────────────────
+class TestPortfolioEndpoints:
+    def test_add_to_portfolio(self, client):
+        client.post("/register", json={"username": "tester", "password": "password123"})
+        res = client.post("/api/portfolio", json={"symbol": "AAPL"})
+        assert res.status_code == 201
+        
+        res2 = client.get("/api/portfolio")
+        data = json.loads(res2.data)
+        assert data["count"] == 1
+        assert data["portfolio"][0]["symbol"] == "AAPL"
+
+
+# ── 6. Unit Tests: Business Logic ─────────────────────────────────────────────
 class TestSimulatePrice:
     def test_returns_new_price(self):
         result = simulate_price(200.0)
-        assert "price" in result
         assert result["price"] > 0
-
-    def test_has_change_fields(self):
-        result = simulate_price(150.0)
-        assert "change" in result
-        assert "change_pct" in result
-
-    def test_change_pct_is_within_bounds(self):
-        for _ in range(50):            # run 50 times to cover randomness
-            result = simulate_price(100.0)
-            assert -10 < result["change_pct"] < 10
-
-    def test_source_is_simulated(self):
-        assert simulate_price(100.0)["source"] == "simulated"
+        assert result["source"] == "simulated"

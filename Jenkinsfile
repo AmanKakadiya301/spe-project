@@ -78,7 +78,7 @@ pipeline {
                 echo 'Deploying to Kubernetes cluster...'
                 sh '''
                     # Bypass Jenkins Secrets to use the natively generated embedded Kubeconfig
-                    export KUBECONFIG=/home/amank/jenkins-kubeconfig.yaml
+                    export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
                     
                     # Replace the image tag in the deployment file
                     sed -i "s|image: amand2011/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml

@@ -76,21 +76,22 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 echo 'Deploying to Kubernetes cluster...'
-                withCredentials([file(credentialsId: env.KUBECONFIG_CREDENTIALS, variable: 'KUBECONFIG')]) {
-                    sh '''
-                        # Replace the image tag in the deployment file
-                        sed -i "s|image: amand2011/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
-                        
-                        # Apply Kubernetes manifests
-                        kubectl apply -f k8s/namespace.yaml
-                        kubectl apply -f k8s/deployment.yaml
-                        kubectl apply -f k8s/service.yaml
-                        kubectl apply -f k8s/hpa.yaml
-                        
-                        # Verify rollout status
-                        kubectl rollout status deployment/stock-app-deployment -n fintech-prod --timeout=90s
-                    '''
-                }
+                sh '''
+                    # Bypass Jenkins Secrets to use the natively generated embedded Kubeconfig
+                    export KUBECONFIG=/home/amank/jenkins-kubeconfig.yaml
+                    
+                    # Replace the image tag in the deployment file
+                    sed -i "s|image: amand2011/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
+                    
+                    # Apply Kubernetes manifests
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl apply -f k8s/hpa.yaml
+                    
+                    # Verify rollout status
+                    kubectl rollout status deployment/stock-app-deployment -n fintech-prod --timeout=90s
+                '''
             }
         }
     }

@@ -81,7 +81,7 @@ pipeline {
                     export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
                     
                     # Replace the image tag in the deployment file
-                    sed -i "s|image: amand2011/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
+                    sed -i "s|image: amankakadiya301/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
                     
                     # Apply Kubernetes manifests
                     kubectl apply -f k8s/namespace.yaml

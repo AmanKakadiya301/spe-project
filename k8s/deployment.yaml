@@ -31,6 +31,10 @@ spec:
         image: amankakadiya301/fintech-stock-app:latest
         imagePullPolicy: Always
         
+        env:
+        - name: FINNHUB_API_KEY
+          value: "d6terp9r01qhkb43tisg"
+
         ports:
         - containerPort: 5000
           name: http

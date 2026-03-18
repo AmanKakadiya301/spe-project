@@ -33,7 +33,7 @@ spec:
         
         env:
         - name: FINNHUB_API_KEY
-          value: "d6terp9r01qhkb43tisg"
+          value: "d6terp9r01qhkb43tisgd6terp9r01qhkb43tit0"
 
         ports:
         - containerPort: 5000

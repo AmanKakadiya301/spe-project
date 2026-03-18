@@ -7,6 +7,7 @@ pipeline {
         DOCKER_TAG   = "build-${BUILD_NUMBER}"
         REGISTRY_CREDENTIALS = 'dockerhub-credentials'
         KUBECONFIG_CREDENTIALS = 'k8s-kubeconfig'
+        ALERT_EMAIL  = 'amand2011@example.com' // Change this if you want a different email
     }
 
     // Trigger on code push to main branch
@@ -97,10 +98,15 @@ pipeline {
     post {
         success {
             echo '✅ Pipeline completed successfully!'
-            // You could add Slack or Email notifications here
+            mail to: "${env.ALERT_EMAIL}",
+                 subject: "SUCCESS: Pipeline ${currentBuild.fullDisplayName}",
+                 body: "Good news! The Jenkins pipeline completed successfully.\n\nProject: ${env.JOB_NAME}\nBuild: ${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}"
         }
         failure {
             echo '❌ Pipeline failed! Please check the logs.'
+            mail to: "${env.ALERT_EMAIL}",
+                 subject: "FAILED: Pipeline ${currentBuild.fullDisplayName}",
+                 body: "Attention! The Jenkins pipeline failed.\n\nProject: ${env.JOB_NAME}\nBuild: ${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}\nPlease check the console output."
         }
         always {
             echo 'Cleaning up workspace...'

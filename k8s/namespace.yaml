@@ -1,0 +1,9 @@
+# k8s/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fintech-prod
+  labels:
+    environment: production
+    team: devops
+    project: stock-analyzer

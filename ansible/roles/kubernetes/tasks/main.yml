@@ -1,0 +1,37 @@
+---
+# ansible/roles/kubernetes/tasks/main.yml
+# Role to install Minikube / Kubectl for a single-node setup
+# Note: For multi-node, you would install kubeadm, kubelet, and kubectl instead.
+
+- name: Download Minikube binary
+  get_url:
+    url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    dest: /usr/local/bin/minikube
+    mode: '0755'
+
+- name: Download Kubectl binary
+  get_url:
+    url: "https://dl.k8s.io/release/{{ lookup('url', 'https://dl.k8s.io/release/stable.txt', split_lines=False) }}/bin/linux/amd64/kubectl"
+    dest: /usr/local/bin/kubectl
+    mode: '0755'
+
+- name: Ensure Minikube relies on Docker driver
+  command: minikube config set driver docker
+  become_user: "{{ ansible_user }}"
+  ignore_errors: yes
+
+- name: Start Minikube (if not already running)
+  command: minikube status
+  register: minikube_status
+  become_user: "{{ ansible_user }}"
+  ignore_errors: yes
+  changed_when: false
+
+- name: Start cluster
+  command: "minikube start --memory=4096 --cpus=2"
+  become_user: "{{ ansible_user }}"
+  when: "'Running' not in minikube_status.stdout"
+
+- name: Enable Metrics Server (required for HPA)
+  command: "minikube addons enable metrics-server"
+  become_user: "{{ ansible_user }}"

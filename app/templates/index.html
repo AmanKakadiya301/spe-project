@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoDevOps FinTech | Live Stock Dashboard</title>
+  <style>
+    /* ── Reset & Base ──────────────────────────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #080d1a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────── */
+    header {
+      background: linear-gradient(135deg, #111827, #0d1526);
+      border-bottom: 1px solid #1e2d45;
+      padding: 18px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.4);
+    }
+
+    .logo { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.5px; }
+    .logo .accent { color: #38bdf8; }
+    .logo .accent2 { color: #34d399; }
+
+    .header-right { display: flex; align-items: center; gap: 16px; }
+
+    .live-badge {
+      display: flex; align-items: center; gap: 6px;
+      background: #0a2519;
+      border: 1px solid #16a34a;
+      color: #4ade80;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    .live-dot {
+      width: 8px; height: 8px;
+      background: #4ade80;
+      border-radius: 50%;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    .refresh-btn {
+      background: #1e3a5f;
+      border: 1px solid #2d6aa0;
+      color: #93c5fd;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover { background: #2d4a7a; border-color: #60a5fa; }
+
+    /* ── Main Container ─────────────────────────────────────────────────── */
+    main { max-width: 1300px; margin: 0 auto; padding: 40px 24px; }
+
+    .page-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 4px; }
+    .page-subtitle { color: #64748b; font-size: 0.88rem; margin-bottom: 6px; }
+    .last-updated { color: #3b82f6; font-size: 0.78rem; margin-bottom: 32px; }
+
+    /* ── Stats Bar ──────────────────────────────────────────────────────── */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      margin-bottom: 36px;
+    }
+
+    .stat-card {
+      background: #101827;
+      border: 1px solid #1e2d45;
+      border-radius: 10px;
+      padding: 16px 20px;
+    }
+
+    .stat-label { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-value { font-size: 1.4rem; font-weight: 700; color: #f1f5f9; margin-top: 4px; }
+    .stat-value.green { color: #4ade80; }
+    .stat-value.red   { color: #f87171; }
+
+    /* ── Stock Grid ─────────────────────────────────────────────────────── */
+    .section-title {
+      font-size: 0.85rem;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      background: linear-gradient(145deg, #111827, #0f1929);
+      border: 1px solid #1e2d45;
+      border-radius: 14px;
+      padding: 22px 24px;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: #2d4a7a;
+      box-shadow: 0 8px 30px rgba(59,130,246,0.12);
+    }
+
+    .card:hover::before { opacity: 1; }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+
+    .symbol {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: #f8fafc;
+      letter-spacing: -0.5px;
+    }
+
+    .source-badge {
+      font-size: 0.62rem;
+      padding: 3px 8px;
+      border-radius: 8px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .source-live      { background: #0a2519; color: #4ade80; border: 1px solid #16a34a; }
+    .source-simulated { background: #1a1a2e; color: #a78bfa; border: 1px solid #5b21b6; }
+
+    .price {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #f1f5f9;
+      letter-spacing: -1px;
+      margin: 8px 0;
+    }
+
+    .change {
+      font-size: 0.88rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .change.up   { color: #4ade80; }
+    .change.down { color: #f87171; }
+
+    .change-pill {
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-left: 6px;
+    }
+
+    .change.up   .change-pill { background: #0a2519; }
+    .change.down .change-pill { background: #2a0a0a; }
+
+    .prev-close {
+      margin-top: 10px;
+      font-size: 0.75rem;
+      color: #4b5563;
+    }
+
+    /* ── Loading ────────────────────────────────────────────────────────── */
+    .loading {
+      grid-column: 1/-1;
+      text-align: center;
+      padding: 80px 20px;
+      color: #374151;
+    }
+
+    .spinner {
+      width: 44px; height: 44px;
+      border: 3px solid #1e2d45;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 20px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-text { font-size: 1rem; }
+
+    /* ── Error ──────────────────────────────────────────────────────────── */
+    .error-card {
+      grid-column: 1/-1;
+      background: #130a0a;
+      border: 1px solid #7f1d1d;
+      border-radius: 14px;
+      padding: 30px;
+      text-align: center;
+      color: #f87171;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      text-align: center;
+      padding: 28px;
+      color: #374151;
+      font-size: 0.75rem;
+      border-top: 1px solid #111827;
+      margin-top: 60px;
+    }
+
+    footer span { color: #4b5563; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">
+    Auto<span class="accent">DevOps</span>
+    <span class="accent2">FinTech</span>
+  </div>
+  <div class="header-right">
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      LIVE
+    </div>
+    <button class="refresh-btn" onclick="fetchStocks()">↻ Refresh</button>
+  </div>
+</header>
+
+<!-- ── Main ──────────────────────────────────────────────────────────────── -->
+<main>
+  <div class="page-title">Real-Time Stock Dashboard</div>
+  <div class="page-subtitle">
+    AutoDevOps FinTech Pipeline · Docker · Kubernetes · Jenkins · ELK
+  </div>
+  <div class="last-updated" id="last-updated">Fetching data…</div>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar" id="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Tracked Symbols</div>
+      <div class="stat-value" id="stat-count">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Gainers</div>
+      <div class="stat-value green" id="stat-gainers">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Losers</div>
+      <div class="stat-value red" id="stat-losers">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Data Source</div>
+      <div class="stat-value" id="stat-source" style="font-size:0.95rem">—</div>
+    </div>
+  </div>
+
+  <!-- Stock Cards -->
+  <div class="section-title">Market Overview</div>
+  <div id="stocks-grid" class="grid">
+    <div class="loading">
+      <div class="spinner"></div>
+      <div class="loading-text">Loading live stock data…</div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  AutoDevOps FinTech Pipeline &nbsp;·&nbsp;
+  <span>Flask · Docker · Kubernetes · Jenkins · Ansible · ELK Stack</span>
+</footer>
+
+<script>
+  // Auto-refresh every 30 seconds
+  const REFRESH_INTERVAL_MS = 30000;
+  let refreshTimer = null;
+
+  async function fetchStocks() {
+    try {
+      const res  = await fetch('/api/stocks');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      renderStocks(data.stocks);
+      updateStats(data.stocks);
+
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + new Date().toLocaleTimeString() +
+        '  ·  Auto-refresh in 30s';
+    } catch (err) {
+      document.getElementById('stocks-grid').innerHTML = `
+        <div class="error-card">
+          <div style="font-size:1.5rem;margin-bottom:10px">⚠</div>
+          <div style="font-weight:700;margin-bottom:6px">Failed to fetch stock data</div>
+          <div style="font-size:0.82rem;color:#9ca3af">${err.message}</div>
+        </div>`;
+    }
+  }
+
+  function renderStocks(stocks) {
+    const grid = document.getElementById('stocks-grid');
+    grid.innerHTML = stocks.map(s => {
+      const up     = s.change >= 0;
+      const arrow  = up ? '▲' : '▼';
+      const cls    = up ? 'up' : 'down';
+      const srcCls = s.source === 'live' ? 'source-live' : 'source-simulated';
+      const srcLbl = s.source === 'live' ? '● LIVE' : '◉ SIM';
+
+      return `
+      <div class="card">
+        <div class="card-header">
+          <div class="symbol">${s.symbol}</div>
+          <div class="source-badge ${srcCls}">${srcLbl}</div>
+        </div>
+        <div class="price">$${s.price.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+        <div class="change ${cls}">
+          ${arrow} $${Math.abs(s.change).toFixed(2)}
+          <span class="change-pill">${up ? '+' : ''}${s.change_pct.toFixed(2)}%</span>
+        </div>
+        <div class="prev-close">Prev close: $${(s.previous_close||0).toFixed(2)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function updateStats(stocks) {
+    const gainers = stocks.filter(s => s.change >= 0).length;
+    const losers  = stocks.length - gainers;
+    const liveCount = stocks.filter(s => s.source === 'live').length;
+
+    document.getElementById('stat-count').textContent   = stocks.length;
+    document.getElementById('stat-gainers').textContent = gainers;
+    document.getElementById('stat-losers').textContent  = losers;
+    document.getElementById('stat-source').textContent  =
+      liveCount === stocks.length ? 'Live API' :
+      liveCount === 0             ? 'Simulated' :
+                                    `${liveCount} Live / ${stocks.length - liveCount} Sim`;
+  }
+
+  // Initial load + auto-refresh
+  fetchStocks();
+  refreshTimer = setInterval(fetchStocks, REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>

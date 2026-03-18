@@ -1,0 +1,105 @@
+# docker-compose.yml — Local Development Stack
+# Runs the Stock App + full ELK Stack together locally.
+# Simulates the production environment WITHOUT needing Kubernetes.
+#
+# Usage:
+#   docker-compose up -d          # start all services
+#   docker-compose logs -f        # stream logs
+#   docker-compose ps             # check status
+#   docker-compose down           # stop & remove containers
+#   docker-compose down -v        # stop + delete volumes
+
+version: "3.9"
+
+services:
+
+  # ── Stock Application ─────────────────────────────────────────────────────
+  stock-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: stock-app
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - FLASK_ENV=development
+      - APP_VERSION=1.0.0-dev
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - fintech-net
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Elasticsearch ─────────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=fintech-cluster
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - fintech-net
+    healthcheck:
+      test: ["CMD-SHELL",
+             "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Logstash ──────────────────────────────────────────────────────────────
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.12.0
+    container_name: logstash
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    volumes:
+      - ./elk/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./elk/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+    environment:
+      - "LS_JAVA_OPTS=-Xmx512m -Xms512m"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - fintech-net
+
+  # ── Kibana ─────────────────────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=fintech-kibana
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - fintech-net
+
+volumes:
+  elasticsearch-data:
+    driver: local
+
+networks:
+  fintech-net:
+    driver: bridge
+    name: fintech-network

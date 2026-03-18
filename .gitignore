@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# MacOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs and Data
+*.log
+elk/logstash/data/
+elasticsearch-data/
+
+# Terraform (if added later)
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+test-results.xml

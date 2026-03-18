@@ -1,0 +1,50 @@
+---
+# ansible/roles/app/tasks/main.yml
+# Role to deploy the application manifests to Kubernetes
+
+- name: Create project directory
+  file:
+    path: /opt/fintech-stock-app/k8s
+    state: directory
+    mode: '0755'
+
+- name: Copy Kubernetes manifests to target
+  copy:
+    src: "{{ playbook_dir }}/../k8s/"
+    dest: /opt/fintech-stock-app/k8s/
+
+- name: Apply namespace
+  command: kubectl apply -f /opt/fintech-stock-app/k8s/namespace.yaml
+  become_user: "{{ ansible_user }}"
+
+- name: Apply deployment
+  command: kubectl apply -f /opt/fintech-stock-app/k8s/deployment.yaml
+  become_user: "{{ ansible_user }}"
+
+- name: Apply service
+  command: kubectl apply -f /opt/fintech-stock-app/k8s/service.yaml
+  become_user: "{{ ansible_user }}"
+
+- name: Apply HPA
+  command: kubectl apply -f /opt/fintech-stock-app/k8s/hpa.yaml
+  become_user: "{{ ansible_user }}"
+
+- name: Wait for pods to be ready
+  command: kubectl rollout status deployment/stock-app-deployment -n fintech-prod --timeout=120s
+  become_user: "{{ ansible_user }}"
+  register: rollout_result
+  changed_when: false
+
+- name: Show rollout status
+  debug:
+    var: rollout_result.stdout_lines
+
+- name: Verify application endpoint (Smoke Test)
+  uri:
+    url: "http://localhost:30050/health"
+    method: GET
+    status_code: 200
+  register: health_check
+  retries: 10
+  delay: 5
+  until: health_check.status == 200

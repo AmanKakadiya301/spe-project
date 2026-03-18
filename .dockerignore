@@ -1,0 +1,50 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Tests (not needed in production image)
+app/tests/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+test-results.xml
+
+# Secrets (NEVER bake into an image)
+.env
+*.env
+secrets/
+*.pem
+*.key
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD & infrastructure configs (not part of the app)
+Jenkinsfile
+ansible/
+elk/
+k8s/
+*.txt
+docs/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

@@ -1,0 +1,73 @@
+# k8s/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stock-app-deployment
+  namespace: fintech-prod
+  labels:
+    app: stock-app
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stock-app
+      
+  # Zero-downtime rolling update strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0     # Ensure 100% capacity during rollout
+      maxSurge: 1           # Bring up 1 new pod before killing an old one
+
+  template:
+    metadata:
+      labels:
+        app: stock-app
+    spec:
+      containers:
+      - name: stock-app
+        # This tag is replaced dynamically by Jenkins during CI/CD
+        image: amand2011/fintech-stock-app:latest
+        imagePullPolicy: Always
+        
+        ports:
+        - containerPort: 5000
+          name: http
+
+        # Liveness: Is the process dead? (Restarts if fail)
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        # Readiness: Is the app ready to receive traffic? (Removes from load balancer if fail)
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Resource Quotas (Important for HPA scaling and node stability)
+        resources:
+          requests:
+            cpu: "100m"        # 0.1 CPU core
+            memory: "128Mi"    # 128 MB RAM
+          limits:
+            cpu: "500m"        # Max 0.5 CPU core
+            memory: "256Mi"    # Max 256 MB RAM
+
+        # Secure: Run as non-root (matches Dockerfile)
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false

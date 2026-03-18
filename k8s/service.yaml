@@ -1,0 +1,21 @@
+# k8s/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: stock-app-service
+  namespace: fintech-prod
+  labels:
+    app: stock-app
+spec:
+  # Using NodePort so Minikube can easily route to it
+  # In a cloud setup, this would typically be 'LoadBalancer'
+  type: NodePort
+  ports:
+  - port: 5000            # Port the cluster exposes
+    targetPort: 5000      # Port the container listens on
+    protocol: TCP
+    name: http
+    nodePort: 30050       # Explicitly defined static port
+  selector:
+    # Routes traffic to pods with this label
+    app: stock-app

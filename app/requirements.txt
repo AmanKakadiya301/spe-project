@@ -1,0 +1,7 @@
+flask==3.0.0
+gunicorn==21.2.0
+yfinance==0.2.36
+requests==2.31.0
+python-dotenv==1.0.0
+pytest==7.4.4
+pytest-cov==4.1.0

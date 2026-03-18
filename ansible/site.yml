@@ -1,0 +1,19 @@
+---
+# ansible/site.yml
+# Main infrastructure entrypoint. Run with:
+# ansible-playbook -i inventory.ini site.yml
+
+- name: Setup Infrastructure and Deploy Application
+  hosts: all
+  become: yes # Run with sudo
+  
+  roles:
+    - { role: docker,      tags: ['infra', 'docker'] }
+    - { role: kubernetes,  tags: ['infra', 'k8s'] }
+
+- name: Deploy Kubernetes Application
+  hosts: master
+  become: yes
+
+  roles:
+    - { role: app,         tags: ['deploy', 'app'] }

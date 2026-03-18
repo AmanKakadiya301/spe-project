@@ -28,7 +28,7 @@ spec:
       containers:
       - name: stock-app
         # This tag is replaced dynamically by Jenkins during CI/CD
-        image: amand2011/fintech-stock-app:latest
+        image: amankakadiya301/fintech-stock-app:latest
         imagePullPolicy: Always
         
         ports:

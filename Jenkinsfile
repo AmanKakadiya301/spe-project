@@ -3,7 +3,7 @@ pipeline {
     
     // Environment Variables specific to the pipeline run
     environment {
-        DOCKER_IMAGE = 'amand2011/fintech-stock-app'
+        DOCKER_IMAGE = 'amankakadiya301/fintech-stock-app'
         DOCKER_TAG   = "build-${BUILD_NUMBER}"
         REGISTRY_CREDENTIALS = 'dockerhub-credentials'
         KUBECONFIG_CREDENTIALS = 'k8s-kubeconfig'

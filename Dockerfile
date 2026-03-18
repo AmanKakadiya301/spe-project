@@ -35,6 +35,9 @@ RUN groupadd --gid 1001 appuser \
  && useradd  --uid 1001 --gid 1001 \
              -s /bin/false --no-create-home appuser
 
+# Upgrade known vulnerable base OS python packages
+RUN pip install --no-cache-dir --upgrade setuptools wheel jaraco.context
+
 WORKDIR /app
 
 # Copy installed packages from builder

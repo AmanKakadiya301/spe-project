@@ -1,382 +1,398 @@
 """
 stock_data.py
 -------------
-Production-grade stock price service.
+Real-time stock data service using Finnhub API.
 
-Architecture:
-  1. Finnhub API (primary) — real-time quotes
-  2. yfinance (fallback)  — if Finnhub rate-limited or fails
-  3. In-memory TTL cache  — prevents rate limiting & eliminates price fluctuation
-  4. ThreadPoolExecutor   — parallel fetching for all 12 symbols at once
+Features:
+  - Live quotes via Finnhub REST API
+  - In-memory cache (5s TTL) — drop Redis in later via cache_service.py
+  - 7–30 day OHLCV history via yfinance fallback
+  - Symbol search / validation
+  - Company news
+  - WebSocket stream manager (for future /api/stream endpoint)
 
-The cache ensures that even if the API is temporarily unavailable,
-the last known REAL price is served (never random simulation).
+Finnhub free tier: 60 API calls/minute — more than enough for 12 symbols
+with 5s caching (each symbol = 1 call per 5s = 12 calls/5s = 144 calls/min
+BEFORE cache; WITH cache = 1 call per symbol per 5s window = safe).
 """
 
 import os
-import random
 import time
 import logging
 import threading
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
 
 import finnhub
+import yfinance as yf
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# ── Finnhub Client ────────────────────────────────────────────────────────────
-API_KEY = os.getenv("FINNHUB_API_KEY")
-if not API_KEY:
-    logger.warning("FINNHUB_API_KEY not set! Live data will fail.")
-finnhub_client = finnhub.Client(api_key=API_KEY) if API_KEY else None
+# ── Finnhub Client ─────────────────────────────────────────────────────────────
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
 
-# ── yfinance (lazy import to avoid slow startup) ─────────────────────────────
-_yf = None
-def _get_yf():
-    global _yf
-    if _yf is None:
-        try:
-            import yfinance
-            _yf = yfinance
-        except ImportError:
-            logger.warning("yfinance not installed, fallback disabled")
-    return _yf
+try:
+    finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
+    # Quick connectivity test
+    finnhub_client.quote("AAPL")
+    logger.info("Finnhub client initialised successfully")
+except Exception as exc:
+    logger.warning(f"Finnhub client init failed: {exc} — falling back to yfinance only")
+    finnhub_client = None
 
-# ── Default Symbols ──────────────────────────────────────────────────────────
+
+# ── Tracked Symbols ────────────────────────────────────────────────────────────
 DEFAULT_SYMBOLS = [
-    "AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META",
-    "NVDA", "AMD", "INTC", "NFLX", "IBM", "ORCL",
+    "AAPL", "GOOGL", "MSFT", "AMZN",
+    "TSLA", "META",  "NVDA", "AMD",
+    "INTC", "NFLX",  "IBM",  "ORCL",
 ]
 
-# ── In-Memory TTL Cache ──────────────────────────────────────────────────────
-# This is the KEY fix for price fluctuation:
-# Once a real price is fetched, it's cached for CACHE_TTL seconds.
-# During that window, the cached value is returned instantly — no API call,
-# no rate limiting, no random fallback. Prices stay rock-solid stable.
-CACHE_TTL = 15  # seconds — aggressive enough for real-time feel, safe for rate limits
-_price_cache = {}      # {symbol: {"data": dict, "ts": float}}
-_history_cache = {}    # {symbol: {"data": list, "ts": float}}
-_news_cache = {}       # {symbol: {"data": list, "ts": float}}
-_profile_cache = {}    # {symbol: {"data": dict, "ts": float}}
+# Runtime list — admin can add/remove symbols without restart
+_tracked_symbols: list[str] = list(DEFAULT_SYMBOLS)
+_symbols_lock = threading.Lock()
+
+
+def get_tracked_symbols() -> list[str]:
+    with _symbols_lock:
+        return list(_tracked_symbols)
+
+def add_symbol(symbol: str) -> bool:
+    symbol = symbol.upper().strip()
+    with _symbols_lock:
+        if symbol not in _tracked_symbols:
+            _tracked_symbols.append(symbol)
+            return True
+    return False
+
+def remove_symbol(symbol: str) -> bool:
+    symbol = symbol.upper().strip()
+    with _symbols_lock:
+        if symbol in _tracked_symbols:
+            _tracked_symbols.remove(symbol)
+            return True
+    return False
+
+
+# ── In-Memory Cache ────────────────────────────────────────────────────────────
+# Format: { "AAPL": {"data": {...}, "expires_at": float} }
+_cache: dict = {}
 _cache_lock = threading.Lock()
-_cache_stats = {"hits": 0, "misses": 0}
+CACHE_TTL = 5  # seconds
 
 
-def _cache_get(cache, key, ttl=CACHE_TTL):
-    """Thread-safe cache lookup. Returns cached data or None."""
+def _cache_get(key: str) -> Optional[dict]:
     with _cache_lock:
-        entry = cache.get(key)
-        if entry and (time.time() - entry["ts"]) < ttl:
-            _cache_stats["hits"] += 1
+        entry = _cache.get(key)
+        if entry and time.time() < entry["expires_at"]:
             return entry["data"]
-        _cache_stats["misses"] += 1
         return None
 
 
-def _cache_set(cache, key, data):
-    """Thread-safe cache write."""
+def _cache_set(key: str, data: dict, ttl: int = CACHE_TTL):
     with _cache_lock:
-        cache[key] = {"data": data, "ts": time.time()}
-
-
-def get_cache_stats():
-    """Return cache hit/miss statistics."""
-    with _cache_lock:
-        total = _cache_stats["hits"] + _cache_stats["misses"]
-        return {
-            "hits": _cache_stats["hits"],
-            "misses": _cache_stats["misses"],
-            "hit_rate": round(_cache_stats["hits"] / total * 100, 1) if total > 0 else 0,
-            "cached_prices": len(_price_cache),
-            "cached_histories": len(_history_cache),
-            "ttl_seconds": CACHE_TTL,
+        _cache[key] = {
+            "data": data,
+            "expires_at": time.time() + ttl,
         }
 
 
-# ── Price Fetching (Finnhub → yfinance → last cached) ───────────────────────
-
-def _fetch_finnhub_quote(symbol):
-    """Fetch quote from Finnhub. Raises on failure."""
-    if not finnhub_client:
-        raise ValueError("Finnhub not configured")
-    quote = finnhub_client.quote(symbol)
-    current = quote.get("c")
-    prev_close = quote.get("pc")
-    if current == 0 and prev_close == 0:
-        raise ValueError(f"Finnhub returned 0s for {symbol}")
-    change = quote.get("d", round(current - prev_close, 2))
-    change_pct = quote.get("dp", round((change / prev_close) * 100, 2) if prev_close else 0.0)
-    return {
-        "symbol": symbol,
-        "price": round(current, 2),
-        "previous_close": round(prev_close, 2),
-        "change": round(change, 2),
-        "change_pct": round(change_pct, 2),
-        "source": "live",
-        "timestamp": quote.get("t", int(time.time())),
-    }
-
-
-def _fetch_yfinance_quote(symbol):
-    """Fetch quote from yfinance as fallback. Raises on failure."""
-    yf = _get_yf()
-    if not yf:
-        raise ValueError("yfinance not available")
-    ticker = yf.Ticker(symbol)
-    info = ticker.fast_info
-    current = info.last_price
-    prev_close = info.previous_close
-    if current is None:
-        raise ValueError(f"yfinance returned None for {symbol}")
-    change = round(current - prev_close, 2)
-    change_pct = round((change / prev_close) * 100, 2) if prev_close else 0.0
-    return {
-        "symbol": symbol,
-        "price": round(current, 2),
-        "previous_close": round(prev_close, 2),
-        "change": change,
-        "change_pct": change_pct,
-        "source": "live",
-        "timestamp": int(time.time()),
-    }
-
-
-def get_stock_price(symbol):
-    """
-    Get real-time stock price with caching and multi-source fallback.
-    Priority: cache → Finnhub → yfinance → stale cache (never random simulation).
-    """
-    symbol = symbol.upper()
-
-    # 1. Check cache first
-    cached = _cache_get(_price_cache, symbol)
-    if cached:
-        return cached
-
-    # 2. Try Finnhub (primary)
-    try:
-        data = _fetch_finnhub_quote(symbol)
-        _cache_set(_price_cache, symbol, data)
-        logger.info(f"Finnhub quote — {symbol}: ${data['price']}")
-        return data
-    except Exception as e1:
-        logger.warning(f"Finnhub failed for {symbol}: {e1}")
-
-    # 3. Try yfinance (fallback)
-    try:
-        data = _fetch_yfinance_quote(symbol)
-        _cache_set(_price_cache, symbol, data)
-        logger.info(f"yfinance quote — {symbol}: ${data['price']}")
-        return data
-    except Exception as e2:
-        logger.warning(f"yfinance failed for {symbol}: {e2}")
-
-    # 4. Return stale cache if available (NEVER random simulation)
+def cache_stats() -> dict:
+    """Return cache hit/miss stats — used by admin panel."""
     with _cache_lock:
-        stale = _price_cache.get(symbol)
-        if stale:
-            logger.info(f"Serving stale cache for {symbol}")
-            result = stale["data"].copy()
-            result["source"] = "cached"
-            return result
-
-    return {"error": f"Symbol '{symbol}' not found or unavailable"}
+        total = len(_cache)
+        live  = sum(1 for v in _cache.values() if time.time() < v["expires_at"])
+    return {"total_keys": total, "live_keys": live, "ttl_seconds": CACHE_TTL}
 
 
-# ── History ──────────────────────────────────────────────────────────────────
+# ── Quote: Finnhub → yfinance fallback ────────────────────────────────────────
 
-def get_stock_history(symbol, days=7):
-    """Fetch OHLCV history from Finnhub → yfinance fallback, with caching."""
-    symbol = symbol.upper()
+def get_stock_price(symbol: str) -> dict:
+    """
+    Fetch current quote for a symbol.
+    Returns dict with: symbol, price, change, change_pct, previous_close,
+                       high, low, open, timestamp, source
+    """
+    symbol = symbol.upper().strip()
+    cache_key = f"quote:{symbol}"
 
-    cached = _cache_get(_history_cache, symbol, ttl=300)  # 5 min cache for history
+    # 1. Cache hit
+    cached = _cache_get(cache_key)
     if cached:
+        cached["from_cache"] = True
         return cached
 
-    # Try Finnhub candles (may fail on free tier)
+    # 2. Try Finnhub
+    if finnhub_client:
+        try:
+            q = finnhub_client.quote(symbol)
+            # q = {c: current, d: change, dp: change%, h: high, l: low, o: open, pc: prev_close}
+            if q and q.get("c", 0) > 0:
+                result = {
+                    "symbol":         symbol,
+                    "price":          round(q["c"],  2),
+                    "change":         round(q["d"],  2),
+                    "change_pct":     round(q["dp"], 4),
+                    "previous_close": round(q["pc"], 2),
+                    "high":           round(q["h"],  2),
+                    "low":            round(q["l"],  2),
+                    "open":           round(q["o"],  2),
+                    "timestamp":      datetime.utcnow().isoformat() + "Z",
+                    "source":         "finnhub",
+                    "from_cache":     False,
+                }
+                _cache_set(cache_key, result)
+                logger.info(f"[Finnhub] {symbol} → ${result['price']} ({result['change_pct']:+.2f}%)")
+                return result
+        except Exception as exc:
+            logger.warning(f"[Finnhub] quote failed for {symbol}: {exc}")
+
+    # 3. Fallback: yfinance
+    return _yfinance_quote(symbol)
+
+
+def _yfinance_quote(symbol: str) -> dict:
+    """yfinance fallback for current quote."""
     try:
-        if finnhub_client:
-            now = int(time.time())
-            past = int((datetime.now() - timedelta(days=days + 3)).timestamp())
-            res = finnhub_client.stock_candles(symbol, "D", past, now)
-            if res.get("s") == "ok":
-                history = []
-                for i in range(min(days, len(res.get("c", [])))):
-                    idx = len(res["c"]) - days + i
-                    if idx < 0:
-                        idx = i
-                    history.append({
-                        "date": datetime.fromtimestamp(res["t"][idx]).strftime("%Y-%m-%d"),
-                        "open": round(res["o"][idx], 2),
-                        "close": round(res["c"][idx], 2),
-                        "high": round(res["h"][idx], 2),
-                        "low": round(res["l"][idx], 2),
-                        "volume": int(res["v"][idx]),
-                    })
-                if history:
-                    _cache_set(_history_cache, symbol, history)
-                    return history
-    except Exception as e:
-        logger.warning(f"Finnhub history failed for {symbol}: {e}")
+        ticker = yf.Ticker(symbol)
+        info   = ticker.fast_info
 
-    # Try yfinance history
-    try:
-        yf = _get_yf()
-        if yf:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period=f"{days}d")
-            if not hist.empty:
-                history = []
-                for date, row in hist.iterrows():
-                    history.append({
-                        "date": str(date.date()),
-                        "open": round(row["Open"], 2),
-                        "close": round(row["Close"], 2),
-                        "high": round(row["High"], 2),
-                        "low": round(row["Low"], 2),
-                        "volume": int(row["Volume"]),
-                    })
-                _cache_set(_history_cache, symbol, history)
-                return history
-    except Exception as e:
-        logger.warning(f"yfinance history failed for {symbol}: {e}")
+        price        = round(float(info.last_price or 0), 2)
+        prev_close   = round(float(info.previous_close or price), 2)
+        change       = round(price - prev_close, 2)
+        change_pct   = round((change / prev_close * 100) if prev_close else 0, 4)
 
-    # Generate synthetic history based on cached/known price
-    price_data = _cache_get(_price_cache, symbol, ttl=9999)
-    base = price_data["price"] if price_data else 100.0
-    history = []
-    for i in range(days):
-        pct = random.uniform(-1.5, 1.5)
-        close = round(base * (1 + pct / 100), 2)
-        history.append({
-            "date": (datetime.now() - timedelta(days=days - i)).strftime("%Y-%m-%d"),
-            "open": base,
-            "close": close,
-            "high": round(max(base, close) * 1.005, 2),
-            "low": round(min(base, close) * 0.995, 2),
-            "volume": random.randint(10_000_000, 80_000_000),
-        })
-        base = close
-    return history
-
-
-# ── News ─────────────────────────────────────────────────────────────────────
-
-def get_stock_news(symbol, count=5):
-    """Fetch company news from Finnhub."""
-    symbol = symbol.upper()
-    cached = _cache_get(_news_cache, symbol, ttl=300)
-    if cached:
-        return cached
-
-    try:
-        if not finnhub_client:
-            return []
-        today = datetime.now().strftime("%Y-%m-%d")
-        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        news = finnhub_client.company_news(symbol, _from=week_ago, to=today)
-        result = []
-        for item in (news or [])[:count]:
-            result.append({
-                "headline": item.get("headline", ""),
-                "summary": item.get("summary", ""),
-                "url": item.get("url", ""),
-                "source": item.get("source", ""),
-                "datetime": item.get("datetime", 0),
-                "image": item.get("image", ""),
-            })
-        _cache_set(_news_cache, symbol, result)
+        result = {
+            "symbol":         symbol,
+            "price":          price,
+            "change":         change,
+            "change_pct":     change_pct,
+            "previous_close": prev_close,
+            "high":           round(float(info.day_high  or price), 2),
+            "low":            round(float(info.day_low   or price), 2),
+            "open":           round(float(info.open      or price), 2),
+            "timestamp":      datetime.utcnow().isoformat() + "Z",
+            "source":         "yfinance",
+            "from_cache":     False,
+        }
+        _cache_set(f"quote:{symbol}", result)
+        logger.info(f"[yfinance] {symbol} → ${result['price']}")
         return result
-    except Exception as e:
-        logger.warning(f"News fetch failed for {symbol}: {e}")
+
+    except Exception as exc:
+        logger.error(f"[yfinance] quote failed for {symbol}: {exc}")
+        return {"error": f"Could not fetch price for {symbol}", "symbol": symbol}
+
+
+# ── History: Finnhub candles → yfinance fallback ───────────────────────────────
+
+def get_stock_history(symbol: str, days: int = 7) -> list[dict]:
+    """
+    Return OHLCV candles for the last N days.
+    Each entry: { date, open, high, low, close, volume }
+    """
+    symbol    = symbol.upper().strip()
+    cache_key = f"history:{symbol}:{days}"
+
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    history = []
+
+    # 1. Finnhub candles (1-day resolution = "D")
+    if finnhub_client:
+        try:
+            end   = int(time.time())
+            start = int((datetime.utcnow() - timedelta(days=days + 2)).timestamp())
+            res   = finnhub_client.stock_candles(symbol, "D", start, end)
+
+            if res and res.get("s") == "ok":
+                for i in range(len(res["t"])):
+                    history.append({
+                        "date":   datetime.utcfromtimestamp(res["t"][i]).strftime("%Y-%m-%d"),
+                        "open":   round(res["o"][i], 2),
+                        "high":   round(res["h"][i], 2),
+                        "low":    round(res["l"][i], 2),
+                        "close":  round(res["c"][i], 2),
+                        "volume": res["v"][i],
+                    })
+                history = history[-days:]
+                _cache_set(cache_key, history, ttl=60)
+                return history
+        except Exception as exc:
+            logger.warning(f"[Finnhub] candles failed for {symbol}: {exc}")
+
+    # 2. Fallback: yfinance
+    try:
+        ticker = yf.Ticker(symbol)
+        df     = ticker.history(period=f"{days + 2}d", interval="1d")
+
+        for date, row in df.tail(days).iterrows():
+            history.append({
+                "date":   date.strftime("%Y-%m-%d"),
+                "open":   round(float(row["Open"]),   2),
+                "high":   round(float(row["High"]),   2),
+                "low":    round(float(row["Low"]),    2),
+                "close":  round(float(row["Close"]),  2),
+                "volume": int(row["Volume"]),
+            })
+
+        _cache_set(cache_key, history, ttl=60)
+        return history
+
+    except Exception as exc:
+        logger.error(f"[yfinance] history failed for {symbol}: {exc}")
         return []
 
 
-# ── Company Profile ──────────────────────────────────────────────────────────
+# ── All Stocks ─────────────────────────────────────────────────────────────────
 
-def get_stock_profile(symbol):
-    """Fetch company profile from Finnhub."""
-    symbol = symbol.upper()
-    cached = _cache_get(_profile_cache, symbol, ttl=3600)  # 1 hour cache
+def get_all_stocks() -> list[dict]:
+    """
+    Return current quotes for all tracked symbols.
+    Uses threading to fetch in parallel — typically <500ms for 12 symbols.
+    """
+    symbols = get_tracked_symbols()
+    results = [None] * len(symbols)
+
+    def fetch(i, sym):
+        results[i] = get_stock_price(sym)
+
+    threads = [threading.Thread(target=fetch, args=(i, s)) for i, s in enumerate(symbols)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=8)
+
+    return [r for r in results if r and "error" not in r]
+
+
+# ── Symbol Search ──────────────────────────────────────────────────────────────
+
+def search_symbol(query: str) -> dict:
+    """
+    Search / validate a ticker symbol.
+    Returns { symbol, description, valid } or { error }
+    """
+    query = query.upper().strip()
+
+    if finnhub_client:
+        try:
+            res = finnhub_client.symbol_search(query)
+            matches = [
+                r for r in res.get("result", [])
+                if r.get("symbol", "").upper() == query
+            ]
+            if matches:
+                m = matches[0]
+                return {
+                    "symbol":      m["symbol"],
+                    "description": m.get("description", ""),
+                    "type":        m.get("type", ""),
+                    "valid":       True,
+                    "source":      "finnhub",
+                }
+        except Exception as exc:
+            logger.warning(f"[Finnhub] symbol_search failed: {exc}")
+
+    # Fallback: try fetching a quote
+    try:
+        ticker = yf.Ticker(query)
+        info   = ticker.fast_info
+        if info.last_price and info.last_price > 0:
+            return {
+                "symbol":      query,
+                "description": ticker.info.get("longName", query),
+                "type":        "Common Stock",
+                "valid":       True,
+                "source":      "yfinance",
+            }
+    except Exception:
+        pass
+
+    return {"error": f"Symbol '{query}' not found", "valid": False}
+
+
+# ── Company News ───────────────────────────────────────────────────────────────
+
+def get_stock_news(symbol: str, count: int = 5) -> list[dict]:
+    """
+    Return latest company news headlines from Finnhub.
+    Each entry: { headline, summary, url, source, datetime }
+    """
+    symbol    = symbol.upper().strip()
+    cache_key = f"news:{symbol}"
+
+    cached = _cache_get(cache_key)
     if cached:
         return cached
 
+    if not finnhub_client:
+        return []
+
     try:
-        if not finnhub_client:
-            return {}
-        profile = finnhub_client.company_profile2(symbol=symbol)
-        if not profile:
-            return {}
-        result = {
-            "name": profile.get("name", symbol),
-            "logo": profile.get("logo", ""),
-            "country": profile.get("country", ""),
-            "exchange": profile.get("exchange", ""),
-            "industry": profile.get("finnhubIndustry", ""),
-            "market_cap": profile.get("marketCapitalization", 0),
-            "ipo": profile.get("ipo", ""),
-            "weburl": profile.get("weburl", ""),
-        }
-        _cache_set(_profile_cache, symbol, result)
-        return result
-    except Exception as e:
-        logger.warning(f"Profile fetch failed for {symbol}: {e}")
+        today = datetime.utcnow()
+        start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+        end   = today.strftime("%Y-%m-%d")
+
+        articles = finnhub_client.company_news(symbol, _from=start, to=end)
+        news = []
+        for a in articles[:count]:
+            news.append({
+                "headline": a.get("headline", ""),
+                "summary":  a.get("summary",  "")[:200],
+                "url":      a.get("url",       ""),
+                "source":   a.get("source",    ""),
+                "datetime": datetime.utcfromtimestamp(
+                    a.get("datetime", 0)
+                ).strftime("%Y-%m-%d %H:%M"),
+            })
+
+        _cache_set(cache_key, news, ttl=300)  # cache news for 5 min
+        return news
+
+    except Exception as exc:
+        logger.warning(f"[Finnhub] news failed for {symbol}: {exc}")
+        return []
+
+
+# ── Company Profile ────────────────────────────────────────────────────────────
+
+def get_company_profile(symbol: str) -> dict:
+    """
+    Return basic company profile from Finnhub.
+    { name, ticker, exchange, ipo, marketCap, logo, weburl, industry }
+    """
+    symbol    = symbol.upper().strip()
+    cache_key = f"profile:{symbol}"
+
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    if not finnhub_client:
         return {}
 
-
-# ── Search ───────────────────────────────────────────────────────────────────
-
-def search_symbol(query):
-    """Search for a stock symbol via Finnhub."""
-    query = query.upper().strip()
-    if not query:
-        return {"error": "Empty query"}
     try:
-        if not finnhub_client:
-            raise ValueError("Finnhub unconfigured")
-        res = finnhub_client.symbol_search(query)
-        best = None
-        for r in res.get("result", []):
-            if r.get("symbol") == query or r.get("displaySymbol") == query:
-                best = r
-                break
-        if not best and res.get("result"):
-            best = res["result"][0]
-        if not best:
-            return {"error": f"Symbol '{query}' not found"}
-
-        # Get quote for the matched symbol
-        price_data = get_stock_price(best["symbol"])
-        return {
-            "symbol": best.get("displaySymbol", best["symbol"]),
-            "description": best.get("description", ""),
-            "price": price_data.get("price", 0),
-            "valid": True,
+        p = finnhub_client.company_profile2(symbol=symbol)
+        profile = {
+            "name":       p.get("name",           symbol),
+            "ticker":     p.get("ticker",          symbol),
+            "exchange":   p.get("exchange",        ""),
+            "ipo":        p.get("ipo",             ""),
+            "market_cap": round(p.get("marketCapitalization", 0), 2),
+            "logo":       p.get("logo",            ""),
+            "weburl":     p.get("weburl",          ""),
+            "industry":   p.get("finnhubIndustry", ""),
+            "currency":   p.get("currency",        "USD"),
         }
-    except Exception:
-        return {"error": f"Symbol '{query}' not found"}
+        _cache_set(cache_key, profile, ttl=3600)  # cache profile for 1 hour
+        return profile
 
-
-# ── Bulk Fetch (Parallel) ───────────────────────────────────────────────────
-
-def get_all_stocks():
-    """
-    Fetch all default symbols in parallel using ThreadPoolExecutor.
-    This reduces total fetch time from ~4s (sequential) to ~500ms (parallel).
-    """
-    results = []
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(get_stock_price, sym): sym for sym in DEFAULT_SYMBOLS}
-        for future in as_completed(futures):
-            try:
-                data = future.result(timeout=10)
-                if isinstance(data, dict) and "error" not in data:
-                    results.append(data)
-            except Exception as e:
-                logger.warning(f"Parallel fetch failed for {futures[future]}: {e}")
-
-    # Sort to maintain consistent order
-    order = {sym: i for i, sym in enumerate(DEFAULT_SYMBOLS)}
-    results.sort(key=lambda s: order.get(s["symbol"], 999))
-    return results
+    except Exception as exc:
+        logger.warning(f"[Finnhub] profile failed for {symbol}: {exc}")
+        return {}

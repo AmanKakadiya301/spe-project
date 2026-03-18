@@ -26,15 +26,19 @@ fi
 echo -e "${YELLOW}Starting Trivy $SCAN_TYPE scan on $TARGET...${NC}"
 
 # Ensure Trivy is installed
+TRIVY_BIN="trivy"
 if ! command -v trivy &> /dev/null; then
-    echo -e "${YELLOW}Trivy not found. Downloading...${NC}"
-    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.48.3
+    if [ ! -f "./trivy" ]; then
+        echo -e "${YELLOW}Trivy not found. Downloading latest version locally...${NC}"
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b .
+    fi
+    TRIVY_BIN="./trivy"
 fi
 
 # Run the scan
 # --exit-code 1 means the script will fail if vulnerabilities are found
 # --severity HIGH,CRITICAL means we only care about serious issues
-trivy $SCAN_TYPE \
+$TRIVY_BIN $SCAN_TYPE \
     --severity HIGH,CRITICAL \
     --no-progress \
     --exit-code 1 \

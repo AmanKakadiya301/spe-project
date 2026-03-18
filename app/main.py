@@ -38,7 +38,7 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
 
-from stock_data import get_stock_price, get_stock_history, get_all_stocks, search_symbol
+from stock_data import get_stock_price, get_stock_history, get_all_stocks, search_symbol, get_stock_news, get_stock_profile, get_cache_stats
 from models import db, User, PortfolioItem, Alert
 
 # ── Load environment variables ────────────────────────────────────────────────
@@ -306,6 +306,27 @@ def suggest_stocks():
     except Exception as exc:
         logger.warning(f"Suggest failed for '{query}': {exc}")
         return jsonify({"suggestions": []}), 200
+
+
+@app.route("/api/stock/<symbol>/news")
+def get_news(symbol):
+    """GET /api/stock/AAPL/news — company news from Finnhub."""
+    count = request.args.get("count", 5, type=int)
+    news = get_stock_news(symbol.upper(), count)
+    return jsonify({"symbol": symbol.upper(), "news": news, "count": len(news)}), 200
+
+
+@app.route("/api/stock/<symbol>/profile")
+def get_profile(symbol):
+    """GET /api/stock/AAPL/profile — company profile from Finnhub."""
+    profile = get_stock_profile(symbol.upper())
+    return jsonify({"symbol": symbol.upper(), "profile": profile}), 200
+
+
+@app.route("/api/cache/stats")
+def cache_stats():
+    """GET /api/cache/stats — cache hit/miss statistics."""
+    return jsonify(get_cache_stats()), 200
 
 
 # ── Portfolio API ─────────────────────────────────────────────────────────────

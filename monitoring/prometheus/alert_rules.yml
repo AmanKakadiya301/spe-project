@@ -1,0 +1,38 @@
+groups:
+  - name: fintech_app
+    rules:
+      - alert: AppDown
+        expr: up{job="stock-app"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Stock app is DOWN"
+          description: "stock-app unreachable for 1+ minute"
+
+      - alert: HighErrorRate
+        expr: rate(flask_http_request_total{status=~"5.."}[5m]) / rate(flask_http_request_total[5m]) > 0.05
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "HTTP 5xx error rate > 5%"
+
+      - alert: SlowP95
+        expr: histogram_quantile(0.95, rate(flask_http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 response time > 2s"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Redis is DOWN"
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "PostgreSQL is DOWN"

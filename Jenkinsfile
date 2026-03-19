@@ -1,117 +1,147 @@
 pipeline {
     agent any
-    
-    // Environment Variables specific to the pipeline run
     environment {
-        DOCKER_IMAGE = 'amankakadiya301/fintech-stock-app'
-        DOCKER_TAG   = "build-${BUILD_NUMBER}"
+        DOCKER_IMAGE         = 'amankakadiya301/fintech-stock-app'
+        DOCKER_TAG           = "build-${BUILD_NUMBER}"
         REGISTRY_CREDENTIALS = 'dockerhub-credentials'
-        KUBECONFIG_CREDENTIALS = 'k8s-kubeconfig'
-        ALERT_EMAIL  = 'kakadiyaaman2004@gmail.com' // Email to receive success/failure alerts
+        ALERT_EMAIL          = 'kakadiyaaman2004@gmail.com'
+        DEPLOY_NAMESPACE     = 'fintech-prod'
     }
-
-    // Trigger on code push to main branch
-    triggers {
-        githubPush()
+    triggers { githubPush() }
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
     }
-
     stages {
         stage('Checkout') {
             steps {
-                echo 'Checking out code from Git...'
                 checkout scm
+                script {
+                    env.GIT_COMMIT_MSG = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                    env.GIT_AUTHOR    = sh(script: 'git log -1 --pretty=%an', returnStdout: true).trim()
+                }
             }
         }
-
-        stage('Lint & Secrets Check') {
+        stage('Lint') {
             steps {
-                echo 'Running Trivy filesystem scan to check for baked-in secrets...'
-                sh './trivy-scan.sh fs .'
-            }
-        }
-
-        stage('Unit Tests') {
-            steps {
-                echo 'Running Python unit tests...'
                 sh '''
-                    # In a real environment, you might use a python agent or virtualenv
-                    python3 -m venv venv || true
-                    . venv/bin/activate || true
-                    pip install -r app/requirements.txt
-                    python -m pytest app/tests/ -v --junitxml=test-results.xml
+                    python3 -m venv venv
+                    . venv/bin/activate
+                    pip install black pylint isort --quiet
+                    black --check app/ || true
+                    isort --check-only app/ || true
+                    pylint app/*.py --disable=C0114,C0115,C0116,R0903,W0212 --fail-under=7.0 || true
                 '''
             }
-            post {
-                always {
-                    junit 'test-results.xml'
-                }
-            }
         }
-
+        stage('Trivy FS Scan') {
+            steps { sh './trivy-scan.sh fs .' }
+        }
+        stage('OWASP Dep Check') {
+            steps {
+                sh '''
+                    . venv/bin/activate || true
+                    pip install pip-audit --quiet
+                    pip-audit -r requirements.txt --format=json --output=pip-audit.json || true
+                    pip-audit -r requirements.txt
+                '''
+            }
+            post { always { archiveArtifacts artifacts: 'pip-audit.json', allowEmptyArchive: true } }
+        }
+        stage('Unit Tests') {
+            steps {
+                sh '''
+                    . venv/bin/activate
+                    pip install -r requirements.txt pytest pytest-cov --quiet
+                    pytest app/tests/ -v --cov=app --cov-report=xml:coverage.xml --junitxml=test-results.xml
+                '''
+            }
+            post { always { junit 'test-results.xml' } }
+        }
         stage('Build Docker Image') {
             steps {
-                echo "Building image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest ."
+                sh """
+                    DOCKER_BUILDKIT=1 docker build \
+                        --cache-from ${DOCKER_IMAGE}:latest \
+                        --build-arg BUILDKIT_INLINE_CACHE=1 \
+                        -t ${DOCKER_IMAGE}:${DOCKER_TAG} \
+                        -t ${DOCKER_IMAGE}:latest .
+                """
             }
         }
-
-        stage('Container Security Scan') {
-            steps {
-                echo 'Scanning built image for vulnerabilities...'
-                sh "./trivy-scan.sh image ${DOCKER_IMAGE}:${DOCKER_TAG}"
-            }
+        stage('Trivy Image Scan') {
+            steps { sh "./trivy-scan.sh image ${DOCKER_IMAGE}:${DOCKER_TAG}" }
         }
-
-        stage('Push to Registry') {
+        stage('Push to DockerHub') {
             steps {
-                echo 'Pushing image to DockerHub...'
-                withCredentials([usernamePassword(credentialsId: env.REGISTRY_CREDENTIALS, passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
-                    sh "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
-                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                    sh "docker push ${DOCKER_IMAGE}:latest"
+                withCredentials([usernamePassword(credentialsId: env.REGISTRY_CREDENTIALS,
+                    usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
+                    """
                 }
             }
         }
-
-        stage('Deploy to Kubernetes') {
+        stage('Deploy to Staging') {
+            when { branch 'develop' }
             steps {
-                echo 'Deploying to Kubernetes cluster...'
-                sh '''
-                    # Bypass Jenkins Secrets to use the natively generated embedded Kubeconfig
+                sh """
                     export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
-                    
-                    # Replace the image tag in the deployment file
                     sed -i "s|image: amankakadiya301/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
-                    
-                    # Apply Kubernetes manifests
+                    kubectl apply -f k8s/namespace.yaml
+                    kubectl apply -f k8s/deployment.yaml
+                    kubectl apply -f k8s/service.yaml
+                    kubectl rollout status deployment/stock-app-deployment -n fintech-staging --timeout=90s
+                """
+            }
+        }
+        stage('Deploy to Production') {
+            when { branch 'main' }
+            steps {
+                sh """
+                    export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
+                    sed -i "s|image: amankakadiya301/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
                     kubectl apply -f k8s/namespace.yaml
                     kubectl apply -f k8s/deployment.yaml
                     kubectl apply -f k8s/service.yaml
                     kubectl apply -f k8s/hpa.yaml
-                    
-                    # Verify rollout status
-                    kubectl rollout status deployment/stock-app-deployment -n fintech-prod --timeout=90s
-                '''
+                    kubectl rollout status deployment/stock-app-deployment -n ${DEPLOY_NAMESPACE} --timeout=90s
+                """
+            }
+        }
+        stage('Health Check') {
+            steps {
+                sh """
+                    export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
+                    sleep 10
+                    POD=\$(kubectl get pod -n ${DEPLOY_NAMESPACE} -l app=stock-app -o jsonpath='{.items[0].metadata.name}')
+                    kubectl exec -n ${DEPLOY_NAMESPACE} \$POD -- python -c \
+                        "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+                """
             }
         }
     }
-
     post {
         success {
-            echo '✅ Pipeline completed successfully!'
             mail to: "${env.ALERT_EMAIL}",
-                 subject: "SUCCESS: Pipeline ${currentBuild.fullDisplayName}",
-                 body: "Good news! The Jenkins pipeline completed successfully.\n\nProject: ${env.JOB_NAME}\nBuild: ${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}"
+                subject: "SUCCESS: ${currentBuild.fullDisplayName}",
+                body: "Pipeline passed.\n\nBuild: #${env.BUILD_NUMBER}\nImage: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}\nLogs: ${env.BUILD_URL}"
         }
         failure {
-            echo '❌ Pipeline failed! Please check the logs.'
+            sh """
+                export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
+                kubectl rollout undo deployment/stock-app-deployment -n ${DEPLOY_NAMESPACE} || true
+            """
             mail to: "${env.ALERT_EMAIL}",
-                 subject: "FAILED: Pipeline ${currentBuild.fullDisplayName}",
-                 body: "Attention! The Jenkins pipeline failed.\n\nProject: ${env.JOB_NAME}\nBuild: ${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}\nPlease check the console output."
+                subject: "FAILED: ${currentBuild.fullDisplayName}",
+                body: "Pipeline FAILED. Auto-rollback attempted.\n\nBuild: #${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}"
         }
         always {
-            echo 'Cleaning up workspace...'
-            cleanWs() // Deletes the workspace content to save disk space
+            sh 'docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} 2>/dev/null || true'
+            cleanWs()
         }
     }
 }

@@ -207,7 +207,7 @@ def health():
 @app.route("/api/stock/<symbol>")
 def get_stock(symbol):
     result = get_stock_price(symbol.upper())
-    if not stock:
+    if not result:
       return jsonify({"error": "Symbol not found"}), 404
     if "error" in result:
         abort(404, description=result["error"])

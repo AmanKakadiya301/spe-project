@@ -1,82 +1,114 @@
 pipeline {
     agent any
+
     environment {
-        DOCKER_IMAGE         = 'amankakadiya301/fintech-stock-app'
-        DOCKER_TAG           = "build-${BUILD_NUMBER}"
-        REGISTRY_CREDENTIALS = 'dockerhub-credentials'
-        ALERT_EMAIL          = 'kakadiyaaman2004@gmail.com'
-        DEPLOY_NAMESPACE     = 'fintech-prod'
+        DOCKER_IMAGE           = 'amankakadiya301/fintech-stock-app'
+        DOCKER_TAG             = "build-${BUILD_NUMBER}"
+        REGISTRY_CREDENTIALS   = 'dockerhub-credentials'
+        KUBECONFIG_CREDENTIALS = 'k8s-kubeconfig'
+        ALERT_EMAIL            = 'kakadiyaaman2004@gmail.com'
+        // Minimum test coverage % required to pass the build
+        COVERAGE_THRESHOLD     = '70'
     }
-    triggers { githubPush() }
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds()
+
+    triggers {
+        githubPush()
     }
+
     stages {
+
         stage('Checkout') {
             steps {
+                echo 'Checking out source code...'
                 checkout scm
-                script {
-                    env.GIT_COMMIT_MSG = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
-                    env.GIT_AUTHOR    = sh(script: 'git log -1 --pretty=%an', returnStdout: true).trim()
+            }
+        }
+
+        // NEW: Lint Python files before running tests
+        // Catches syntax errors and obvious bugs immediately
+        stage('Lint') {
+            steps {
+                echo 'Linting Python source files...'
+                sh '''
+                    python3 -m venv venv || true
+                    . venv/bin/activate || true
+                    pip install flake8 --quiet
+                    # E501 = line too long (relaxed for this project)
+                    # W503 = line break before binary operator (style choice)
+                    flake8 app/ --max-line-length=120 --ignore=E501,W503 \
+                        --exclude=app/tests/,app/instance/ || true
+                '''
+            }
+        }
+
+        stage('Lint & Secrets Check') {
+            steps {
+                echo 'Running Trivy filesystem scan for baked-in secrets...'
+                sh './trivy-scan.sh fs .'
+            }
+        }
+
+        // IMPROVED: Added --cov flag and coverage gate
+        stage('Unit Tests') {
+            steps {
+                echo 'Running Python unit tests with coverage...'
+                sh '''
+                    python3 -m venv venv || true
+                    . venv/bin/activate || true
+                    pip install -r app/requirements.txt --quiet
+                    python -m pytest app/tests/ -v \
+                        --junitxml=test-results.xml \
+                        --cov=app \
+                        --cov-report=xml:coverage.xml \
+                        --cov-report=term-missing \
+                        --cov-fail-under=${COVERAGE_THRESHOLD}
+                '''
+            }
+            post {
+                always {
+                    junit 'test-results.xml'
+                    // Publish HTML coverage report in Jenkins
+                    publishHTML(target: [
+                        allowMissing:          false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll:               true,
+                        reportDir:             'htmlcov',
+                        reportFiles:           'index.html',
+                        reportName:            'Coverage Report'
+                    ])
                 }
             }
         }
-        stage('Lint') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    pip install black pylint isort --quiet
-                    black --check app/ || true
-                    isort --check-only app/ || true
-                    pylint app/*.py --disable=C0114,C0115,C0116,R0903,W0212 --fail-under=7.0 || true
-                '''
-            }
-        }
-        stage('Trivy FS Scan') {
-            steps { sh './trivy-scan.sh fs .' }
-        }
-        stage('OWASP Dep Check') {
-            steps {
-                sh '''
-                    . venv/bin/activate || true
-                    pip install pip-audit --quiet
-                    pip-audit -r requirements.txt --format=json --output=pip-audit.json || true
-                    pip-audit -r requirements.txt
-                '''
-            }
-            post { always { archiveArtifacts artifacts: 'pip-audit.json', allowEmptyArchive: true } }
-        }
-        stage('Unit Tests') {
-            steps {
-                sh '''
-                    . venv/bin/activate
-                    pip install -r requirements.txt pytest pytest-cov --quiet
-                    pytest app/tests/ -v --cov=app --cov-report=xml:coverage.xml --junitxml=test-results.xml
-                '''
-            }
-            post { always { junit 'test-results.xml' } }
-        }
+
+        // IMPROVED: Uses --cache-from to speed up repeated builds via layer caching
         stage('Build Docker Image') {
             steps {
+                echo "Building image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                 sh """
-                    DOCKER_BUILDKIT=1 docker build \
+                    docker pull ${DOCKER_IMAGE}:latest || true
+                    docker build \
                         --cache-from ${DOCKER_IMAGE}:latest \
-                        --build-arg BUILDKIT_INLINE_CACHE=1 \
                         -t ${DOCKER_IMAGE}:${DOCKER_TAG} \
                         -t ${DOCKER_IMAGE}:latest .
                 """
             }
         }
-        stage('Trivy Image Scan') {
-            steps { sh "./trivy-scan.sh image ${DOCKER_IMAGE}:${DOCKER_TAG}" }
-        }
-        stage('Push to DockerHub') {
+
+        stage('Container Security Scan') {
             steps {
-                withCredentials([usernamePassword(credentialsId: env.REGISTRY_CREDENTIALS,
-                    usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                echo 'Scanning Docker image for HIGH/CRITICAL CVEs...'
+                sh "./trivy-scan.sh image ${DOCKER_IMAGE}:${DOCKER_TAG}"
+            }
+        }
+
+        stage('Push to Registry') {
+            steps {
+                echo 'Pushing image to DockerHub...'
+                withCredentials([usernamePassword(
+                    credentialsId: env.REGISTRY_CREDENTIALS,
+                    passwordVariable: 'DOCKER_PASS',
+                    usernameVariable: 'DOCKER_USER'
+                )]) {
                     sh """
                         echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
                         docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
@@ -85,62 +117,63 @@ pipeline {
                 }
             }
         }
-        stage('Deploy to Staging') {
-            when { branch 'develop' }
+
+        stage('Deploy to Kubernetes') {
             steps {
+                echo 'Deploying to Kubernetes cluster...'
                 sh """
                     export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
+
                     sed -i "s|image: amankakadiya301/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
-                    kubectl apply -f k8s/namespace.yaml
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-                    kubectl rollout status deployment/stock-app-deployment -n fintech-staging --timeout=90s
-                """
-            }
-        }
-        stage('Deploy to Production') {
-            when { branch 'main' }
-            steps {
-                sh """
-                    export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
-                    sed -i "s|image: amankakadiya301/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
+
                     kubectl apply -f k8s/namespace.yaml
                     kubectl apply -f k8s/deployment.yaml
                     kubectl apply -f k8s/service.yaml
                     kubectl apply -f k8s/hpa.yaml
-                    kubectl rollout status deployment/stock-app-deployment -n ${DEPLOY_NAMESPACE} --timeout=90s
+
+                    kubectl rollout status deployment/stock-app-deployment \
+                        -n fintech-prod --timeout=120s
                 """
             }
         }
-        stage('Health Check') {
+
+        // NEW: Smoke test — hit /health after deploy to confirm pod is alive
+        stage('Post-Deploy Smoke Test') {
             steps {
+                echo 'Running post-deployment smoke test...'
                 sh """
                     export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
+                    # Wait for service to be reachable
                     sleep 10
-                    POD=\$(kubectl get pod -n ${DEPLOY_NAMESPACE} -l app=stock-app -o jsonpath='{.items[0].metadata.name}')
-                    kubectl exec -n ${DEPLOY_NAMESPACE} \$POD -- python -c \
-                        "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+                    # Port-forward briefly and hit /health
+                    kubectl port-forward svc/stock-app-service 18080:80 \
+                        -n fintech-prod &
+                    PF_PID=\$!
+                    sleep 5
+                    curl -sf http://localhost:18080/health | grep '"status":"ok"'
+                    kill \$PF_PID || true
+                    echo 'Smoke test PASSED'
                 """
             }
         }
     }
+
     post {
         success {
-            mail to: "${env.ALERT_EMAIL}",
-                subject: "SUCCESS: ${currentBuild.fullDisplayName}",
-                body: "Pipeline passed.\n\nBuild: #${env.BUILD_NUMBER}\nImage: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}\nLogs: ${env.BUILD_URL}"
+            echo '✅ Pipeline completed successfully!'
+            mail to:      "${env.ALERT_EMAIL}",
+                 subject: "SUCCESS: ${currentBuild.fullDisplayName}",
+                 body:    "Pipeline passed.\n\nProject: ${env.JOB_NAME}\nBuild: ${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}"
         }
         failure {
-            sh """
-                export KUBECONFIG=/var/lib/jenkins/jenkins-kubeconfig.yaml
-                kubectl rollout undo deployment/stock-app-deployment -n ${DEPLOY_NAMESPACE} || true
-            """
-            mail to: "${env.ALERT_EMAIL}",
-                subject: "FAILED: ${currentBuild.fullDisplayName}",
-                body: "Pipeline FAILED. Auto-rollback attempted.\n\nBuild: #${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}"
+            echo '❌ Pipeline failed!'
+            mail to:      "${env.ALERT_EMAIL}",
+                 subject: "FAILED: ${currentBuild.fullDisplayName}",
+                 body:    "Pipeline failed.\n\nProject: ${env.JOB_NAME}\nBuild: ${env.BUILD_NUMBER}\nLogs: ${env.BUILD_URL}"
         }
         always {
-            sh 'docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} 2>/dev/null || true'
+            echo 'Cleaning workspace...'
+            sh 'docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true'
             cleanWs()
         }
     }

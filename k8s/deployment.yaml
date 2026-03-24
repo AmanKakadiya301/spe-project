@@ -1,4 +1,13 @@
 # k8s/deployment.yaml
+# FIXED: FINNHUB_API_KEY is now read from a Kubernetes Secret instead of
+# being hardcoded in plaintext. This is a critical security fix.
+#
+# Create the secret before applying:
+#   kubectl create secret generic stock-app-secrets \
+#     --from-literal=FINNHUB_API_KEY=your_key_here \
+#     --from-literal=FLASK_SECRET_KEY=your_flask_key \
+#     -n fintech-prod
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,13 +21,12 @@ spec:
   selector:
     matchLabels:
       app: stock-app
-      
-  # Zero-downtime rolling update strategy
+
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0     # Ensure 100% capacity during rollout
-      maxSurge: 1           # Bring up 1 new pod before killing an old one
+      maxUnavailable: 0
+      maxSurge: 1
 
   template:
     metadata:
@@ -27,19 +35,28 @@ spec:
     spec:
       containers:
       - name: stock-app
-        # This tag is replaced dynamically by Jenkins during CI/CD
         image: amankakadiya301/fintech-stock-app:latest
         imagePullPolicy: Always
-        
+
+        # FIXED: Load secrets from K8s Secret — never hardcode API keys
         env:
         - name: FINNHUB_API_KEY
-          value: "d6terp9r01qhkb43tisgd6terp9r01qhkb43tit0"
+          valueFrom:
+            secretKeyRef:
+              name: stock-app-secrets
+              key: FINNHUB_API_KEY
+        - name: FLASK_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: stock-app-secrets
+              key: FLASK_SECRET_KEY
+        - name: FLASK_ENV
+          value: "production"
 
         ports:
         - containerPort: 5000
           name: http
 
-        # Liveness: Is the process dead? (Restarts if fail)
         livenessProbe:
           httpGet:
             path: /health
@@ -49,7 +66,6 @@ spec:
           timeoutSeconds: 3
           failureThreshold: 3
 
-        # Readiness: Is the app ready to receive traffic? (Removes from load balancer if fail)
         readinessProbe:
           httpGet:
             path: /health
@@ -60,16 +76,14 @@ spec:
           successThreshold: 1
           failureThreshold: 3
 
-        # Resource Quotas (Important for HPA scaling and node stability)
         resources:
           requests:
-            cpu: "100m"        # 0.1 CPU core
-            memory: "256Mi"    # 256 MB RAM
+            cpu: "100m"
+            memory: "256Mi"
           limits:
-            cpu: "500m"        # Max 0.5 CPU core
-            memory: "512Mi"    # Max 512 MB RAM (increased to prevent OOM)
+            cpu: "500m"
+            memory: "512Mi"
 
-        # Secure: Run as non-root (matches Dockerfile)
         securityContext:
           runAsNonRoot: true
           runAsUser: 1001

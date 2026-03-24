@@ -20,6 +20,9 @@ redis>=5.0.1
 pytest==7.4.4
 pytest-cov==4.1.0
 
+# Linting (used by Jenkins Lint stage)
+flake8>=7.0.0
+
 # Build
 wheel>=0.46.2
 jaraco.context>=6.1.0

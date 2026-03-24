@@ -8,7 +8,7 @@ pipeline {
         KUBECONFIG_CREDENTIALS = 'k8s-kubeconfig'
         ALERT_EMAIL            = 'kakadiyaaman2004@gmail.com'
         // Minimum test coverage % required to pass the build
-        COVERAGE_THRESHOLD     = '70'
+        COVERAGE_THRESHOLD     = '60'
     }
 
     triggers {

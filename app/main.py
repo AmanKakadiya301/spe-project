@@ -69,7 +69,7 @@ start_alert_worker(app)
 class JSONFormatter(logging.Formatter):
     def format(self, record):
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z",
             "level": record.levelname,
             "service": "stock-app",
             "message": record.getMessage(),
@@ -198,7 +198,7 @@ def health():
         "status": "ok",
         "service": "stock-app",
         "version": os.getenv("APP_VERSION", "1.0.0"),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z",
     }), 200
 
 
@@ -223,7 +223,7 @@ def get_stocks():
         "count": len(stocks),
         "gainers": gainers,
         "losers": len(stocks) - gainers,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z",
     }), 200
 
 

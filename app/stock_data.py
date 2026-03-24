@@ -19,6 +19,11 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+
+def _utcnow_iso() -> str:
+    """Return current UTC time as ISO string ending with 'Z'."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
 import finnhub
 import yfinance as yf
 from dotenv import load_dotenv
@@ -200,7 +205,7 @@ def simulate_price(base: float = None, symbol: str = "TEST") -> dict:
         "high": round(price * 1.003, 2),
         "low": round(price * 0.997, 2),
         "open": round(prev_close * 1.001, 2),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": _utcnow_iso(),
         "source": "simulated",
         "from_cache": False,
     }
@@ -231,7 +236,7 @@ def get_stock_price(symbol: str) -> dict:
                     "high": round(q["h"], 2),
                     "low": round(q["l"], 2),
                     "open": round(q["o"], 2),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": _utcnow_iso(),
                     "source": "finnhub",
                     "from_cache": False,
                 }
@@ -251,7 +256,13 @@ def get_stock_price(symbol: str) -> dict:
             _SIM_BASES[symbol] = yf_result["price"]
         return yf_result
 
-    # 3. Realistic simulated fallback (uses seeded base — NOT ~$100)
+    # 3. Realistic simulated fallback — only for KNOWN symbols
+    with _sim_bases_lock:
+        known = symbol in _SIM_BASES
+    if not known:
+        syms = get_tracked_symbols()
+        if symbol not in syms:
+            return {"error": f"Symbol '{symbol}' not found", "symbol": symbol}
     logger.warning(f"[Fallback] Simulating {symbol}")
     sim = simulate_price(symbol=symbol)
     _cache_set(cache_key, sim)
@@ -280,7 +291,7 @@ def _yfinance_quote(symbol: str) -> dict:
             "high": round(float(info.day_high or price), 2),
             "low": round(float(info.day_low or price), 2),
             "open": round(float(info.open or price), 2),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": _utcnow_iso(),
             "source": "yfinance",
             "from_cache": False,
         }

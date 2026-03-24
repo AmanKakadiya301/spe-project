@@ -147,7 +147,7 @@ pipeline {
                     # Wait for service to be reachable
                     sleep 10
                     # Port-forward briefly and hit /health
-                    kubectl port-forward svc/stock-app-service 18080:80 \
+                    kubectl port-forward svc/stock-app-service 18080:5000 \
                         -n fintech-prod &
                     PF_PID=\$!
                     sleep 5

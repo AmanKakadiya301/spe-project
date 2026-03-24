@@ -11,6 +11,7 @@ Changes from original:
 import os
 import json
 import logging
+import sqlalchemy.exc
 import time
 from datetime import datetime, timezone
 
@@ -57,8 +58,11 @@ def unauthorized():
     return redirect(url_for("login_page"))
 
 
-with app.app_context():
-    db.create_all()
+try:
+    with app.app_context():
+        db.create_all()
+except (sqlalchemy.exc.OperationalError, sqlalchemy.exc.ProgrammingError) as e:
+    logger.warning(f"Database creation race condition ignored: {e}")
 
 # ── Start background alert worker ─────────────────────────────────────────────
 from alert_worker import start_alert_worker  # noqa: E402

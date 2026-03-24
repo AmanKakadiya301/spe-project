@@ -128,6 +128,13 @@ pipeline {
                     sed -i "s|image: amankakadiya301/fintech-stock-app:latest|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|g" k8s/deployment.yaml
 
                     kubectl apply -f k8s/namespace.yaml
+                    
+                    # Ensure secret exists otherwise deployment hangs forever in CreateContainerConfigError
+                    kubectl create secret generic stock-app-secrets \\
+                        --from-literal=FINNHUB_API_KEY=dummy \\
+                        --from-literal=FLASK_SECRET_KEY=dummy \\
+                        -n fintech-prod --dry-run=client -o yaml | kubectl apply -f -
+
                     kubectl apply -f k8s/deployment.yaml
                     kubectl apply -f k8s/service.yaml
                     kubectl apply -f k8s/hpa.yaml

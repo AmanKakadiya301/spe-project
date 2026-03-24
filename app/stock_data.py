@@ -19,17 +19,18 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-
-def _utcnow_iso() -> str:
-    """Return current UTC time as ISO string ending with 'Z'."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-
 import finnhub
 import yfinance as yf
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+def _utcnow_iso() -> str:
+    """Return current UTC time as ISO string ending with 'Z'."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
 
 # ── Finnhub Client ─────────────────────────────────────────────────────────────
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")

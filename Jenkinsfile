@@ -60,6 +60,7 @@ pipeline {
                         --junitxml=test-results.xml \
                         --cov=app \
                         --cov-report=xml:coverage.xml \
+                        --cov-report=html:htmlcov \
                         --cov-report=term-missing \
                         --cov-fail-under=${COVERAGE_THRESHOLD}
                 '''

@@ -25,9 +25,9 @@ def init_tracing(app):
 
         endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317")
         resource = Resource.create({
-            "service.name":    "fintech-stock-app",
+            "service.name": "fintech-stock-app",
             "service.version": os.getenv("APP_VERSION", "2.0.0"),
-            "deployment.env":  os.getenv("FLASK_ENV", "production"),
+            "deployment.env": os.getenv("FLASK_ENV", "production"),
         })
         provider = TracerProvider(resource=resource)
         provider.add_span_processor(

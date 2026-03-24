@@ -23,7 +23,7 @@ Usage (in main.py):
 import time
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,9 @@ def _check_alerts(app):
                 )
 
                 if fired:
-                    alert.triggered    = True
-                    alert.triggered_at = datetime.utcnow()
-                    alert.is_active    = False
+                    alert.triggered = True
+                    alert.triggered_at = datetime.now(timezone.utc)
+                    alert.is_active = False
 
                     # Store notification for the frontend to poll
                     notif = AlertNotification(

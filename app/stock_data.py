@@ -16,7 +16,7 @@ import logging
 import threading
 import random
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import finnhub
@@ -39,15 +39,17 @@ except Exception as exc:
 # ── Tracked Symbols ────────────────────────────────────────────────────────────
 DEFAULT_SYMBOLS = [
     "AAPL", "GOOGL", "MSFT", "AMZN",
-    "TSLA", "META",  "NVDA", "AMD",
-    "INTC", "NFLX",  "IBM",  "ORCL",
+    "TSLA", "META", "NVDA", "AMD",
+    "INTC", "NFLX", "IBM", "ORCL",
 ]
 _tracked_symbols: list[str] = list(DEFAULT_SYMBOLS)
 _symbols_lock = threading.Lock()
 
+
 def get_tracked_symbols() -> list[str]:
     with _symbols_lock:
         return list(_tracked_symbols)
+
 
 def add_symbol(symbol: str) -> bool:
     symbol = symbol.upper().strip()
@@ -57,6 +59,7 @@ def add_symbol(symbol: str) -> bool:
             return True
     return False
 
+
 def remove_symbol(symbol: str) -> bool:
     symbol = symbol.upper().strip()
     with _symbols_lock:
@@ -65,10 +68,12 @@ def remove_symbol(symbol: str) -> bool:
             return True
     return False
 
+
 # ── Cache ──────────────────────────────────────────────────────────────────────
 _cache: dict = {}
 _cache_lock = threading.Lock()
 CACHE_TTL = int(os.getenv("STOCK_CACHE_TTL", "5"))
+
 
 def _cache_get(key: str) -> Optional[dict]:
     with _cache_lock:
@@ -77,62 +82,65 @@ def _cache_get(key: str) -> Optional[dict]:
             return entry["data"]
         return None
 
+
 def _cache_set(key: str, data: dict, ttl: int = CACHE_TTL):
     with _cache_lock:
         _cache[key] = {"data": data, "expires_at": time.time() + ttl}
 
+
 def cache_stats() -> dict:
     with _cache_lock:
         total = len(_cache)
-        live  = sum(1 for v in _cache.values() if time.time() < v["expires_at"])
+        live = sum(1 for v in _cache.values() if time.time() < v["expires_at"])
     return {"total_keys": total, "live_keys": live, "ttl_seconds": CACHE_TTL}
+
 
 # ── REALISTIC Simulation Bases ─────────────────────────────────────────────────
 # Accurate as of mid-2025. Updated whenever yfinance returns a real price.
 _SIM_BASES: dict[str, float] = {
-    "AAPL":  185.0,
+    "AAPL": 185.0,
     "GOOGL": 178.0,
-    "MSFT":  425.0,
-    "AMZN":  195.0,
-    "TSLA":  175.0,
-    "META":  525.0,
-    "NVDA":  875.0,
-    "AMD":   165.0,
-    "INTC":   30.0,
-    "NFLX":  640.0,
-    "IBM":   230.0,
-    "ORCL":  140.0,
+    "MSFT": 425.0,
+    "AMZN": 195.0,
+    "TSLA": 175.0,
+    "META": 525.0,
+    "NVDA": 875.0,
+    "AMD": 165.0,
+    "INTC": 30.0,
+    "NFLX": 640.0,
+    "IBM": 230.0,
+    "ORCL": 140.0,
     # Common extras users add:
-    "SPY":   530.0,
-    "QQQ":   460.0,
+    "SPY": 530.0,
+    "QQQ": 460.0,
     "BRK-B": 420.0,
-    "JPM":   215.0,
-    "V":     280.0,
-    "MA":    475.0,
-    "UNH":   520.0,
-    "JNJ":   155.0,
-    "WMT":   180.0,
-    "PG":    170.0,
-    "DIS":    95.0,
-    "BABA":   85.0,
-    "SHOP":   80.0,
-    "SNAP":   10.0,
-    "UBER":   75.0,
-    "LYFT":   14.0,
-    "COIN":  220.0,
-    "PLTR":   25.0,
-    "RBLX":   35.0,
-    "NET":   100.0,
-    "CRWD":  330.0,
-    "ZS":    210.0,
-    "DDOG":  130.0,
-    "SNOW":  170.0,
-    "MDB":   380.0,
+    "JPM": 215.0,
+    "V": 280.0,
+    "MA": 475.0,
+    "UNH": 520.0,
+    "JNJ": 155.0,
+    "WMT": 180.0,
+    "PG": 170.0,
+    "DIS": 95.0,
+    "BABA": 85.0,
+    "SHOP": 80.0,
+    "SNAP": 10.0,
+    "UBER": 75.0,
+    "LYFT": 14.0,
+    "COIN": 220.0,
+    "PLTR": 25.0,
+    "RBLX": 35.0,
+    "NET": 100.0,
+    "CRWD": 330.0,
+    "ZS": 210.0,
+    "DDOG": 130.0,
+    "SNOW": 170.0,
+    "MDB": 380.0,
     "ASML": 850.0,
-    "TSM":   155.0,
-    "SMSN":   70.0,
+    "TSM": 155.0,
+    "SMSN": 70.0,
     "BTC-USD": 68000.0,
-    "ETH-USD":  3500.0,
+    "ETH-USD": 3500.0,
 }
 _sim_bases_lock = threading.Lock()
 
@@ -151,8 +159,8 @@ def _get_sim_base(symbol: str) -> float:
     # Try to seed base from yfinance
     try:
         ticker = yf.Ticker(symbol)
-        info   = ticker.fast_info
-        price  = float(info.last_price or 0)
+        info = ticker.fast_info
+        price = float(info.last_price or 0)
         if price > 0:
             with _sim_bases_lock:
                 _SIM_BASES[symbol] = price
@@ -176,32 +184,32 @@ def simulate_price(base: float = None, symbol: str = "TEST") -> dict:
     if base is None:
         base = _get_sim_base(symbol)
 
-    t          = time.time()
-    wobble     = math.sin(t / 60) * base * 0.005
-    price      = round(base + wobble + random.uniform(-base * 0.001, base * 0.001), 2)
+    t = time.time()
+    wobble = math.sin(t / 60) * base * 0.005
+    price = round(base + wobble + random.uniform(-base * 0.001, base * 0.001), 2)
     prev_close = round(base * 0.999, 2)
-    change     = round(price - prev_close, 2)
+    change = round(price - prev_close, 2)
     change_pct = round(change / prev_close * 100, 4) if prev_close else 0
 
     return {
-        "symbol":         symbol,
-        "price":          max(price, 0.01),
-        "change":         change,
-        "change_pct":     change_pct,
+        "symbol": symbol,
+        "price": max(price, 0.01),
+        "change": change,
+        "change_pct": change_pct,
         "previous_close": prev_close,
-        "high":           round(price * 1.003, 2),
-        "low":            round(price * 0.997, 2),
-        "open":           round(prev_close * 1.001, 2),
-        "timestamp":      datetime.utcnow().isoformat() + "Z",
-        "source":         "simulated",
-        "from_cache":     False,
+        "high": round(price * 1.003, 2),
+        "low": round(price * 0.997, 2),
+        "open": round(prev_close * 1.001, 2),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "simulated",
+        "from_cache": False,
     }
 
 
 # ── Main Quote Fetch ───────────────────────────────────────────────────────────
 
 def get_stock_price(symbol: str) -> dict:
-    symbol    = symbol.upper().strip()
+    symbol = symbol.upper().strip()
     cache_key = f"quote:{symbol}"
 
     cached = _cache_get(cache_key)
@@ -215,17 +223,17 @@ def get_stock_price(symbol: str) -> dict:
             q = finnhub_client.quote(symbol)
             if q and q.get("c", 0) > 0:
                 result = {
-                    "symbol":         symbol,
-                    "price":          round(q["c"],  2),
-                    "change":         round(q["d"],  2),
-                    "change_pct":     round(q["dp"], 4),
+                    "symbol": symbol,
+                    "price": round(q["c"], 2),
+                    "change": round(q["d"], 2),
+                    "change_pct": round(q["dp"], 4),
                     "previous_close": round(q["pc"], 2),
-                    "high":           round(q["h"],  2),
-                    "low":            round(q["l"],  2),
-                    "open":           round(q["o"],  2),
-                    "timestamp":      datetime.utcnow().isoformat() + "Z",
-                    "source":         "finnhub",
-                    "from_cache":     False,
+                    "high": round(q["h"], 2),
+                    "low": round(q["l"], 2),
+                    "open": round(q["o"], 2),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "source": "finnhub",
+                    "from_cache": False,
                 }
                 # Update sim base with real price so future offline fallback is accurate
                 with _sim_bases_lock:
@@ -253,28 +261,28 @@ def get_stock_price(symbol: str) -> dict:
 def _yfinance_quote(symbol: str) -> dict:
     try:
         ticker = yf.Ticker(symbol)
-        info   = ticker.fast_info
+        info = ticker.fast_info
 
-        price      = round(float(info.last_price or 0), 2)
+        price = round(float(info.last_price or 0), 2)
         prev_close = round(float(info.previous_close or price), 2)
         if price <= 0:
             return {"error": f"No data for {symbol}", "symbol": symbol}
 
-        change     = round(price - prev_close, 2)
+        change = round(price - prev_close, 2)
         change_pct = round((change / prev_close * 100) if prev_close else 0, 4)
 
         result = {
-            "symbol":         symbol,
-            "price":          price,
-            "change":         change,
-            "change_pct":     change_pct,
+            "symbol": symbol,
+            "price": price,
+            "change": change,
+            "change_pct": change_pct,
             "previous_close": prev_close,
-            "high":           round(float(info.day_high  or price), 2),
-            "low":            round(float(info.day_low   or price), 2),
-            "open":           round(float(info.open      or price), 2),
-            "timestamp":      datetime.utcnow().isoformat() + "Z",
-            "source":         "yfinance",
-            "from_cache":     False,
+            "high": round(float(info.day_high or price), 2),
+            "low": round(float(info.day_low or price), 2),
+            "open": round(float(info.open or price), 2),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "yfinance",
+            "from_cache": False,
         }
         _cache_set(f"quote:{symbol}", result)
         return result
@@ -286,7 +294,7 @@ def _yfinance_quote(symbol: str) -> dict:
 # ── History ────────────────────────────────────────────────────────────────────
 
 def get_stock_history(symbol: str, days: int = 7) -> list[dict]:
-    symbol    = symbol.upper().strip()
+    symbol = symbol.upper().strip()
     cache_key = f"history:{symbol}:{days}"
 
     cached = _cache_get(cache_key)
@@ -298,17 +306,17 @@ def get_stock_history(symbol: str, days: int = 7) -> list[dict]:
     # 1. Finnhub candles
     if finnhub_client:
         try:
-            end   = int(time.time())
-            start = int((datetime.utcnow() - timedelta(days=days + 2)).timestamp())
-            res   = finnhub_client.stock_candles(symbol, "D", start, end)
+            end = int(time.time())
+            start = int((datetime.now(timezone.utc) - timedelta(days=days + 2)).timestamp())
+            res = finnhub_client.stock_candles(symbol, "D", start, end)
             if res and res.get("s") == "ok":
                 for i in range(len(res["t"])):
                     history.append({
-                        "date":   datetime.utcfromtimestamp(res["t"][i]).strftime("%Y-%m-%d"),
-                        "open":   round(res["o"][i], 2),
-                        "high":   round(res["h"][i], 2),
-                        "low":    round(res["l"][i], 2),
-                        "close":  round(res["c"][i], 2),
+                        "date": datetime.utcfromtimestamp(res["t"][i]).strftime("%Y-%m-%d"),
+                        "open": round(res["o"][i], 2),
+                        "high": round(res["h"][i], 2),
+                        "low": round(res["l"][i], 2),
+                        "close": round(res["c"][i], 2),
                         "volume": res["v"][i],
                     })
                 history = history[-days:]
@@ -320,14 +328,14 @@ def get_stock_history(symbol: str, days: int = 7) -> list[dict]:
     # 2. yfinance
     try:
         ticker = yf.Ticker(symbol)
-        df     = ticker.history(period=f"{days + 2}d", interval="1d")
+        df = ticker.history(period=f"{days + 2}d", interval="1d")
         for date, row in df.tail(days).iterrows():
             history.append({
-                "date":   date.strftime("%Y-%m-%d"),
-                "open":   round(float(row["Open"]),  2),
-                "high":   round(float(row["High"]),  2),
-                "low":    round(float(row["Low"]),   2),
-                "close":  round(float(row["Close"]), 2),
+                "date": date.strftime("%Y-%m-%d"),
+                "open": round(float(row["Open"]), 2),
+                "high": round(float(row["High"]), 2),
+                "low": round(float(row["Low"]), 2),
+                "close": round(float(row["Close"]), 2),
                 "volume": int(row["Volume"]),
             })
         if history:
@@ -337,19 +345,19 @@ def get_stock_history(symbol: str, days: int = 7) -> list[dict]:
         logger.error(f"[yfinance] history {symbol}: {exc}")
 
     # 3. Simulated history using realistic base
-    base  = _get_sim_base(symbol)
-    today = datetime.utcnow()
+    base = _get_sim_base(symbol)
+    today = datetime.now(timezone.utc)
     for i in range(days, 0, -1):
-        d      = today - timedelta(days=i)
-        drift  = random.uniform(-0.02, 0.02)
-        close  = round(base * (1 + drift), 2)
-        o      = round(base, 2)
+        d = today - timedelta(days=i)
+        drift = random.uniform(-0.02, 0.02)
+        close = round(base * (1 + drift), 2)
+        o = round(base, 2)
         history.append({
-            "date":   d.strftime("%Y-%m-%d"),
-            "open":   o,
-            "high":   round(max(o, close) * 1.005, 2),
-            "low":    round(min(o, close) * 0.995, 2),
-            "close":  close,
+            "date": d.strftime("%Y-%m-%d"),
+            "open": o,
+            "high": round(max(o, close) * 1.005, 2),
+            "low": round(min(o, close) * 0.995, 2),
+            "close": close,
             "volume": random.randint(10_000_000, 80_000_000),
         })
         base = close
@@ -367,8 +375,10 @@ def get_all_stocks() -> list[dict]:
         results[i] = get_stock_price(sym)
 
     threads = [threading.Thread(target=fetch, args=(i, s)) for i, s in enumerate(symbols)]
-    for t in threads: t.start()
-    for t in threads: t.join(timeout=8)
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=8)
     return [r for r in results if r and "error" not in r]
 
 
@@ -379,7 +389,7 @@ def search_symbol(query: str) -> dict:
 
     if finnhub_client:
         try:
-            res     = finnhub_client.symbol_search(query)
+            res = finnhub_client.symbol_search(query)
             matches = [r for r in res.get("result", []) if r.get("symbol", "").upper() == query]
             if matches:
                 m = matches[0]
@@ -390,7 +400,7 @@ def search_symbol(query: str) -> dict:
 
     try:
         ticker = yf.Ticker(query)
-        info   = ticker.fast_info
+        info = ticker.fast_info
         if info.last_price and info.last_price > 0:
             return {"symbol": query, "description": ticker.info.get("longName", query),
                     "type": "Common Stock", "valid": True, "source": "yfinance"}
@@ -408,15 +418,17 @@ def search_symbol(query: str) -> dict:
 # ── News & Profile ─────────────────────────────────────────────────────────────
 
 def get_stock_news(symbol: str, count: int = 5) -> list[dict]:
-    symbol    = symbol.upper().strip()
+    symbol = symbol.upper().strip()
     cache_key = f"news:{symbol}"
     cached = _cache_get(cache_key)
-    if cached: return cached
-    if not finnhub_client: return []
+    if cached:
+        return cached
+    if not finnhub_client:
+        return []
     try:
-        today    = datetime.utcnow()
-        start    = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-        end      = today.strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc)
+        start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+        end = today.strftime("%Y-%m-%d")
         articles = finnhub_client.company_news(symbol, _from=start, to=end)
         news = [{"headline": a.get("headline", ""), "summary": a.get("summary", "")[:200],
                  "url": a.get("url", ""), "source": a.get("source", ""),
@@ -430,11 +442,13 @@ def get_stock_news(symbol: str, count: int = 5) -> list[dict]:
 
 
 def get_company_profile(symbol: str) -> dict:
-    symbol    = symbol.upper().strip()
+    symbol = symbol.upper().strip()
     cache_key = f"profile:{symbol}"
     cached = _cache_get(cache_key)
-    if cached: return cached
-    if not finnhub_client: return {}
+    if cached:
+        return cached
+    if not finnhub_client:
+        return {}
     try:
         p = finnhub_client.company_profile2(symbol=symbol)
         profile = {"name": p.get("name", symbol), "ticker": p.get("ticker", symbol),

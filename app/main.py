@@ -12,7 +12,7 @@ import os
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request, abort, redirect, url_for
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
@@ -61,7 +61,7 @@ with app.app_context():
     db.create_all()
 
 # ── Start background alert worker ─────────────────────────────────────────────
-from alert_worker import start_alert_worker
+from alert_worker import start_alert_worker  # noqa: E402
 start_alert_worker(app)
 
 
@@ -69,11 +69,11 @@ start_alert_worker(app)
 class JSONFormatter(logging.Formatter):
     def format(self, record):
         entry = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "level":     record.levelname,
-            "service":   "stock-app",
-            "message":   record.getMessage(),
-            "module":    record.module,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "service": "stock-app",
+            "message": record.getMessage(),
+            "module": record.module,
         }
         if record.exc_info:
             entry["exception"] = self.formatException(record.exc_info)
@@ -95,10 +95,10 @@ def _start_timer():
 def _log_request(response):
     duration_ms = round((time.time() - request.start_time) * 1000, 2)
     logger.info(json.dumps({
-        "event":       "http_request",
-        "method":      request.method,
-        "path":        request.path,
-        "status":      response.status_code,
+        "event": "http_request",
+        "method": request.method,
+        "path": request.path,
+        "status": response.status_code,
         "duration_ms": duration_ms,
         "remote_addr": request.remote_addr,
     }))
@@ -135,7 +135,7 @@ def alerts_page():
 
 @app.route("/register", methods=["POST"])
 def register():
-    data     = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
 
@@ -149,7 +149,7 @@ def register():
         return jsonify({"error": "Username already exists"}), 409
 
     pw_hash = bcrypt.generate_password_hash(password).decode("utf-8")
-    user    = User(username=username, password_hash=pw_hash)
+    user = User(username=username, password_hash=pw_hash)
     db.session.add(user)
     db.session.commit()
     login_user(user)
@@ -159,7 +159,7 @@ def register():
 
 @app.route("/do-login", methods=["POST"])
 def do_login():
-    data     = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
 
@@ -195,10 +195,10 @@ def get_me():
 @app.route("/health")
 def health():
     return jsonify({
-        "status":    "ok",
-        "service":   "stock-app",
-        "version":   os.getenv("APP_VERSION", "1.0.0"),
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "status": "ok",
+        "service": "stock-app",
+        "version": os.getenv("APP_VERSION", "1.0.0"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }), 200
 
 
@@ -208,7 +208,7 @@ def health():
 def get_stock(symbol):
     result = get_stock_price(symbol.upper())
     if not result:
-      return jsonify({"error": "Symbol not found"}), 404
+        return jsonify({"error": "Symbol not found"}), 404
     if "error" in result:
         abort(404, description=result["error"])
     return jsonify(result), 200
@@ -216,21 +216,21 @@ def get_stock(symbol):
 
 @app.route("/api/stocks")
 def get_stocks():
-    stocks  = get_all_stocks()
+    stocks = get_all_stocks()
     gainers = sum(1 for s in stocks if s.get("change", 0) >= 0)
     return jsonify({
-        "stocks":    stocks,
-        "count":     len(stocks),
-        "gainers":   gainers,
-        "losers":    len(stocks) - gainers,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "stocks": stocks,
+        "count": len(stocks),
+        "gainers": gainers,
+        "losers": len(stocks) - gainers,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }), 200
 
 
 @app.route("/api/stock/<symbol>/history")
 def get_history(symbol):
-    days    = request.args.get("days", 7, type=int)
-    days    = min(max(days, 1), 30)
+    days = request.args.get("days", 7, type=int)
+    days = min(max(days, 1), 30)
     history = get_stock_history(symbol.upper(), days)
     if not history:
         abort(404, description=f"No history found for {symbol.upper()}")
@@ -241,7 +241,7 @@ def get_history(symbol):
 def get_news(symbol):
     count = request.args.get("count", 5, type=int)
     count = min(max(count, 1), 20)
-    news  = get_stock_news(symbol.upper(), count)
+    news = get_stock_news(symbol.upper(), count)
     return jsonify({"symbol": symbol.upper(), "count": len(news), "news": news}), 200
 
 
@@ -270,13 +270,13 @@ def suggest_stocks():
         from stock_data import finnhub_client
         if not finnhub_client:
             return jsonify({"suggestions": []}), 200
-        res         = finnhub_client.symbol_search(query)
+        res = finnhub_client.symbol_search(query)
         suggestions = []
         for item in res.get("result", [])[:8]:
             suggestions.append({
-                "symbol":      item.get("symbol", ""),
+                "symbol": item.get("symbol", ""),
                 "description": item.get("description", ""),
-                "type":        item.get("type", ""),
+                "type": item.get("type", ""),
             })
         return jsonify({"suggestions": suggestions}), 200
     except Exception as exc:
@@ -301,7 +301,7 @@ def list_symbols():
 @app.route("/api/admin/symbols", methods=["POST"])
 @login_required
 def admin_add_symbol():
-    data   = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
     symbol = data.get("symbol", "").upper().strip()
     if not symbol:
         return jsonify({"error": "symbol is required"}), 400
@@ -317,7 +317,7 @@ def admin_add_symbol():
 @app.route("/api/admin/symbols/<symbol>", methods=["DELETE"])
 @login_required
 def admin_remove_symbol(symbol):
-    symbol  = symbol.upper()
+    symbol = symbol.upper()
     removed = remove_symbol(symbol)
     if not removed:
         return jsonify({"error": f"{symbol} is not tracked"}), 404
@@ -329,18 +329,18 @@ def admin_remove_symbol(symbol):
 @app.route("/api/portfolio", methods=["GET"])
 @login_required
 def get_portfolio():
-    items     = PortfolioItem.query.filter_by(user_id=current_user.id).all()
+    items = PortfolioItem.query.filter_by(user_id=current_user.id).all()
     portfolio = []
     for item in items:
         stock = get_stock_price(item.symbol)
         entry = item.to_dict()
         if "error" not in stock:
             entry.update({
-                "price":          stock["price"],
-                "change":         stock["change"],
-                "change_pct":     stock["change_pct"],
+                "price": stock["price"],
+                "change": stock["change"],
+                "change_pct": stock["change_pct"],
                 "previous_close": stock.get("previous_close", 0),
-                "source":         stock["source"],
+                "source": stock["source"],
             })
         portfolio.append(entry)
     return jsonify({"portfolio": portfolio, "count": len(portfolio)}), 200
@@ -349,7 +349,7 @@ def get_portfolio():
 @app.route("/api/portfolio", methods=["POST"])
 @login_required
 def add_to_portfolio():
-    data   = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
     symbol = data.get("symbol", "").upper().strip()
     if not symbol:
         return jsonify({"error": "Symbol is required"}), 400
@@ -366,7 +366,7 @@ def add_to_portfolio():
 @login_required
 def remove_from_portfolio(symbol):
     symbol = symbol.upper()
-    item   = PortfolioItem.query.filter_by(user_id=current_user.id, symbol=symbol).first()
+    item = PortfolioItem.query.filter_by(user_id=current_user.id, symbol=symbol).first()
     if not item:
         return jsonify({"error": f"{symbol} not found in your portfolio"}), 404
     db.session.delete(item)
@@ -386,10 +386,10 @@ def get_alerts():
 @app.route("/api/alerts", methods=["POST"])
 @login_required
 def create_alert():
-    data         = request.get_json(silent=True) or {}
-    symbol       = data.get("symbol", "").upper().strip()
+    data = request.get_json(silent=True) or {}
+    symbol = data.get("symbol", "").upper().strip()
     target_price = data.get("target_price")
-    direction    = data.get("direction", "").lower().strip()
+    direction = data.get("direction", "").lower().strip()
 
     if not symbol or target_price is None or direction not in ("above", "below"):
         return jsonify({"error": "symbol, target_price, and direction (above/below) are required"}), 400
@@ -434,7 +434,7 @@ def get_notifications():
     )
     return jsonify({
         "notifications": [n.to_dict() for n in notifs],
-        "count":         len(notifs),
+        "count": len(notifs),
     }), 200
 
 
@@ -467,7 +467,7 @@ def server_error(exc):
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port  = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_ENV", "production") == "development"
     logger.info(f"Starting Stock App on port {port} | debug={debug}")
     app.run(host="0.0.0.0", port=port, debug=debug)

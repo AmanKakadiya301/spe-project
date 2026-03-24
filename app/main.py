@@ -62,7 +62,7 @@ try:
     with app.app_context():
         db.create_all()
 except (sqlalchemy.exc.OperationalError, sqlalchemy.exc.ProgrammingError) as e:
-    logger.warning(f"Database creation race condition ignored: {e}")
+    print(f"Database creation race condition ignored: {e}")
 
 # ── Start background alert worker ─────────────────────────────────────────────
 from alert_worker import start_alert_worker  # noqa: E402
